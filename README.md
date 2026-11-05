@@ -1,9 +1,10 @@
 # AI Virtual Mouse
 
-Control the mouse with hand gestures in front of a webcam: MediaPipe (hand tracking) → gesture
-state machine → pynput (injects mouse/keyboard events into the OS). Cursor movement,
-left/right/double click, drag and drop, vertical and horizontal scrolling, zoom (Ctrl + wheel)
-and a clutch.
+Control the mouse and your music with hand gestures in front of a webcam: MediaPipe (hand
+tracking) → gesture state machine → pynput (injects mouse/keyboard events into the OS). Cursor
+movement, left/right/double click, drag and drop, vertical and horizontal scrolling, zoom
+(Ctrl + wheel) and a clutch; in media mode previous/next track, volume and play/pause. Runs on
+the CPU only.
 
 ## Quick start
 
@@ -53,6 +54,28 @@ like a fist to the system.
 Every pinch is "armed" only after its fingers were seen apart. That is why leaving zoom with the
 fingers together, or a hand coming back into view mid-pinch, does not trigger an accidental
 click.
+
+### Media mode
+
+Hold the **shaka** 🤙 (thumb and pinky out, other fingers curled) for 0.6 s to switch between
+mouse mode and media mode; the HUD box turns orange. Media mode is a separate mode because in
+mouse mode moving the open hand sideways already moves the cursor, so it cannot also mean
+"next track".
+
+| Action | Gesture | Notes |
+| --- | --- | --- |
+| Previous / next track | quick sideways **swipe** of the open hand, left / right | ≥ 1.2 palm lengths within 0.3 s, measured at the wrist; the hand travelling back is ignored for 0.6 s |
+| Volume up / down | **turn** the open hand clockwise / counter-clockwise, like a knob | jog dial: 25° dead zone, then the further you turn, the faster the volume changes; back to neutral stops it |
+| Play / pause | **fist** | once per closing of the hand |
+
+The volume knob works like a spring-loaded jog dial, not like a real knob, because a wrist only
+turns about ±70°: a position-based knob would run out of range, and turning back would undo the
+change. Swipes are measured at the wrist because turning the hand swings the knuckles around
+the wrist while the wrist itself stays put.
+
+Media keys act system-wide: Spotify, YouTube in a browser and other players react without
+having focus. With `MediaConfig.swipe_action = "arrows"` swipes send the Left/Right arrow keys
+instead (slides, photo viewers, seeking in YouTube).
 
 ## Options
 
@@ -118,6 +141,31 @@ camera and no display.
   more sensitive).
 - **Scroll and zoom depend on time, not on frame count:** rate × dt with a fractional
   accumulator. Scrolling "N ticks per frame" is twice as fast at 60 FPS as at 30 FPS.
+
+## Performance
+
+Everything runs on the CPU. The MediaPipe Python package supports its GPU delegate only on
+Ubuntu, so on Windows a graphics card is not used at all, and it is not needed.
+
+Measured per frame on one 2.1 GHz Xeon core (a recent laptop Core i7 is faster):
+
+| Stage | 1280×720 | 640×360 |
+| --- | --- | --- |
+| MJPG decode (camera thread) | 3.8 ms | 0.5 ms |
+| MediaPipe hand landmarker | 9.9 ms | 9.7 ms |
+| gesture engine | 0.1 ms | 0.1 ms |
+| HUD drawing | 0.5 ms | 0.4 ms |
+| cursor jitter at rest (sensor-noise test) | 0.7–1.1 px | 1.2–1.9 px |
+
+- MediaPipe's cost does not depend on the camera resolution (its networks have a fixed input
+  size) and it runs on a single core. A lower resolution saves little time but adds jitter,
+  so 1280×720 stays the default.
+- The software takes roughly 15–20 ms per frame. A 30 FPS laptop webcam adds up to 33 ms of
+  waiting per frame plus its exposure time, so the camera is the real latency bottleneck: a
+  60 FPS camera and good lighting help more than any code change (many webcams lower their
+  frame rate in dim light to expose longer).
+- On a laptop, plug in or pick a balanced / best-performance power mode; power saving
+  throttles the CPU.
 
 ## Tuning
 
