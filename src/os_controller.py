@@ -11,7 +11,9 @@ pynput is used instead of pyautogui: pyautogui sleeps 0.1 s after every call by 
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -220,3 +222,56 @@ class OSController:
         finally:
             self._backend.key_up(key)
             self._held_keys.discard(key)
+
+
+# -- screen geometry -------------------------------------------------------------------------
+def enable_dpi_awareness() -> None:
+    """Windows: make the process DPI-aware so screen size and cursor positions are both in
+    physical pixels. Must run before the first coordinate query, otherwise a library that flips
+    awareness later makes the measured screen size and the cursor coordinates disagree."""
+    if sys.platform == "win32":
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
+        except (AttributeError, OSError):
+            with contextlib.suppress(AttributeError, OSError):
+                ctypes.windll.user32.SetProcessDPIAware()  # Windows 7 fallback
+
+
+def detect_screen_size() -> tuple[int, int] | None:
+    """Size of the primary monitor in the coordinate system pynput uses, or None if unknown."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            enable_dpi_awareness()
+            user32 = ctypes.windll.user32
+            return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+        if sys.platform == "darwin":
+            import Quartz  # installed together with pynput on macOS
+
+            bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+            return int(bounds.size.width), int(bounds.size.height)
+        from Xlib.display import Display  # installed together with pynput on Linux
+
+        display = Display()
+        try:
+            screen = display.screen()
+            return int(screen.width_in_pixels), int(screen.height_in_pixels)
+        finally:
+            display.close()
+    except Exception as exc:
+        log.debug("Native screen size detection failed: %s", exc)
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+        root.withdraw()
+        try:
+            return int(root.winfo_screenwidth()), int(root.winfo_screenheight())
+        finally:
+            root.destroy()
+    except Exception as exc:
+        log.debug("tkinter screen size detection failed: %s", exc)
+    return None
