@@ -199,7 +199,7 @@ camera thread ──newest frame──▶ HandTracker ──HandObservation─�
 | --- | --- |
 | `config.py` | all parameters as dataclasses + consistency validation (e.g. `pinch_enter < pinch_exit`) |
 | `src/camera.py` | a thread that keeps draining the camera and holds only the newest frame |
-| `src/hand_tracker.py` | MediaPipe Tasks API (`HandLandmarker`, VIDEO mode), landmarks in isotropic pixel space |
+| `src/hand_tracker.py` | MediaPipe Tasks API (`HandLandmarker`, VIDEO mode), second search for far hands, landmarks in isotropic pixel space |
 | `src/smoother.py` | 1€ filter for vectors (one shared cutoff frequency for x and y) |
 | `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping |
 | `src/gesture_engine.py` | hand features, debounced posture classification, hysteresis latches, clicks, scroll, zoom |
@@ -244,6 +244,15 @@ tuned against it.
   more sensitive).
 - **Scroll and zoom depend on time, not on frame count:** rate × dt with a fractional
   accumulator. Scrolling "N ticks per frame" is twice as fast at 60 FPS as at 30 FPS.
+- **Image landmarks, not "world" landmarks, for the fingers.** MediaPipe also returns metric 3D
+  "world" landmarks, which sound more accurate. Measured on real hand photos tilted by up to
+  50° in 3D, with webcam noise, they were worse:
+  - 86 of 92 finger states right, against 89 of 92 for the image landmarks (x, y and relative
+    z) used here;
+  - a fist only just counted as a fist (margin ~0 against +0.2).
+- **Far hands get a second search** in a magnified centre crop (see Limitations). It costs
+  time only while the normal search finds no hand, and with no hand in view for a second it
+  runs on every 3rd frame only.
 
 ## Performance
 
@@ -310,9 +319,12 @@ thresholds from numbers, not by feel.
   Macs.
 - **Multiple monitors:** Windows and macOS map onto the primary monitor, X11 onto the whole
   virtual desktop. Set a different area with `--screen`.
-- **Detection range:** MediaPipe's palm detector sees the whole frame scaled down to 192 px. A
-  hand that is small in the frame (far from the camera, wide-angle lens) will not be detected;
-  verified on a sample that was only detected after cropping the image to 80%.
+- **Detection range:** MediaPipe's palm detector sees the whole frame scaled down to 192 px, so a
+  hand that is small in the frame (far from the camera, wide-angle lens) can be missed. When the
+  normal search finds nothing, the centre 60% of the frame is searched again, magnified
+  (`TrackerConfig.zoom_crop`). On real hand photos at several sizes that found a hand in 48%
+  more frames, almost all of them small hands. A far hand near the frame edge can still be
+  missed; coming closer fixes it.
 - Keep one hand in the frame (`num_hands=1`). `--eyes` and `--head` track one face, which
   must be reasonably large in the frame (sit within about 1 m of the camera).
 
