@@ -213,14 +213,49 @@ def test_eyes_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.Mon
     assert ("click", "left", 1) in backend.calls
 
 
+class StrokeTracker:
+    """An open hand rests, makes one quick stroke to the right, rests again, then Ctrl+C."""
+
+    def __init__(self, cfg: TrackerConfig) -> None:
+        self.last_inference_ms = 5.0
+        self.frames = 0
+
+    def __enter__(self) -> StrokeTracker:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def process(self, frame: Any, timestamp: float) -> HandObservation | None:
+        self.frames += 1
+        x = 0.5 + 0.15 * min(max(self.frames - 30, 0) / 12, 1.0)  # 0.2 s stroke at 60 FPS
+        if self.frames > 80:
+            raise KeyboardInterrupt
+        return make_obs(timestamp, center=(x, 0.55), **OPEN)
+
+
+def test_slides_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main, "ThreadedCamera", FakeCamera)
+    monkeypatch.setattr(main, "HandTracker", StrokeTracker)
+    cfg = headless_config()
+    cfg.input_mode = "slides"
+    with pytest.raises(KeyboardInterrupt):
+        main.run(cfg)
+    assert ("tap", "right") in backend.calls
+    assert not [c for c in backend.calls if c[0] in ("move_to", "move_by")]  # no cursor
+
+
 def test_eye_and_head_flags_select_the_input_mode() -> None:
     parse = main.build_parser().parse_args
     eyes = main.config_from_args(parse(["--eyes", "--eyes-pointer", "nose", "--recalibrate"]))
     assert (eyes.input_mode, eyes.eyes.pointer, eyes.eyes.recalibrate) == ("eyes", "nose", True)
     assert main.config_from_args(parse(["--head"])).input_mode == "head"
+    assert main.config_from_args(parse(["--slides"])).input_mode == "slides"
     assert main.config_from_args(parse([])).input_mode == "hands"
     with pytest.raises(SystemExit):
         parse(["--eyes", "--head"])  # one input mode at a time
+    with pytest.raises(SystemExit):
+        parse(["--slides", "--eyes"])
     assert main.main(["--eyes-pointer", "nose"]) == 2  # needs --eyes
 
 
