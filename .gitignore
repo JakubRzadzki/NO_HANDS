@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# Downloaded automatically on first run (~8 MB)
+models/*.task
+models/*.part
