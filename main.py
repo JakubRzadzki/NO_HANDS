@@ -175,7 +175,7 @@ def run(cfg: AppConfig) -> int:
         p = cfg.pointer
         roi = Roi.for_screen(camera.frame_size, screen, p.roi_width, p.roi_center, p.sensitivity)
         mapper = CursorMapper(roi, screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
-        engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight)
+        engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
         hud = Hud(cfg.gesture, cfg.hud.show_landmarks) if cfg.hud.enabled else None
         window = _WindowWatch(cfg.hud.window_name)
         if hud is not None:

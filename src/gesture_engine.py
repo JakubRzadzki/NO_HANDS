@@ -22,7 +22,7 @@ from enum import Enum
 
 import numpy as np
 
-from config import GestureConfig
+from config import GestureConfig, MediaConfig
 from src.hand_tracker import (
     INDEX_MCP,
     INDEX_PIP,
@@ -38,6 +38,7 @@ from src.hand_tracker import (
     WRIST,
     HandObservation,
 )
+from src.media_gestures import MediaGestures
 from src.os_controller import Action, Click, Press, Release, Scroll, Zoom
 from src.pointer import CursorMapper
 from src.smoother import FloatArray, OneEuroFilter
@@ -49,6 +50,8 @@ class Mode(str, Enum):
     SCROLL = "SCROLL"
     ZOOM = "ZOOM"
     CLUTCH = "CLUTCH"
+    SWITCH = "SWITCH"  # shaka held: toggles between mouse and media mode
+    MEDIA = "MEDIA"  # music control instead of the mouse
 
 
 class LeftState(str, Enum):
@@ -168,6 +171,9 @@ class EngineOutput:
     pending_mode: Mode | None = None  # posture change waiting for confirmation
     scroll_origin: tuple[float, float] | None = None  # px, for the HUD
     scroll_rate: tuple[float, float] = (0.0, 0.0)  # ticks/s, for the HUD
+    media_active: bool = False  # media mode instead of mouse mode
+    knob_offset: float | None = None  # degrees from neutral, for the HUD
+    volume_rate: float = 0.0  # volume key presses per second, for the HUD
 
 
 class GestureEngine:
@@ -176,10 +182,16 @@ class GestureEngine:
         cfg: GestureConfig,
         mapper: CursorMapper,
         anchor_index_weight: float = 0.5,
+        media: MediaConfig | None = None,
     ) -> None:
         self.cfg = cfg
         self.mapper = mapper
         self._anchor_weight = anchor_index_weight
+        self.media_cfg = media or MediaConfig()
+        self._media = MediaGestures(self.media_cfg)
+        self._media_active = False  # survives tracking loss: lowering the hand is normal here
+        self._switch_since: float | None = None
+        self._switch_done = False
         self._finger = {
             finger: HysteresisLatch(
                 cfg.finger_extended_above, cfg.finger_curled_below, low_active=False
@@ -225,6 +237,10 @@ class GestureEngine:
     def left_state(self) -> LeftState:
         return self._left
 
+    @property
+    def media_active(self) -> bool:
+        return self._media_active
+
     # -- public API --------------------------------------------------------------------------
     def reset(self) -> list[Action]:
         """Forget all gesture state. Returns the actions needed to release anything held."""
@@ -239,6 +255,8 @@ class GestureEngine:
         self._candidate, self._candidate_frames = None, 0
         self._exit_scroll()
         self._exit_zoom()
+        self._media.reset()
+        self._switch_since, self._switch_done = None, False
         self._last_seen = self._last_t = None
         self.mapper.reset()
         return actions
@@ -253,14 +271,16 @@ class GestureEngine:
         features = HandFeatures.from_observation(obs, self._anchor_weight)
         extended = {f: latch.update(features.extension[f]) for f, latch in self._finger.items()}
         joined = self._joined.update(features.index_middle_gap)
-        if self._mode is Mode.NO_HAND:
-            self._mode = Mode.POINTER  # hand (re)acquired
+        if self._mode is Mode.NO_HAND:  # hand (re)acquired
+            self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
         actions: list[Action] = []
         # An engaged pinch owns the hand: curling the other fingers mid-drag must not turn the
         # pose into a "fist" (clutch) and drop whatever is being dragged.
         if self._left is LeftState.IDLE:
             raw = self._classify(extended, joined, features)
+            if self._media_active and raw is not Mode.SWITCH:
+                raw = Mode.MEDIA  # media mode reads every other pose itself
         else:
             raw = Mode.POINTER
         previous_mode = self._debounce(raw)
@@ -277,6 +297,14 @@ class GestureEngine:
                 actions += self._scroll(features, dt)
             elif self._mode is Mode.ZOOM:
                 actions += self._zoom(features, t)
+            elif self._mode is Mode.SWITCH:
+                self._switch(t)
+            elif self._mode is Mode.MEDIA:
+                fist = not any(extended.values())
+                media_actions, event = self._media.update(obs, fist, t, dt)
+                actions += media_actions
+                if event is not None:
+                    self._set_flash(event, t, 0.5)
 
         return EngineOutput(
             mode=self._mode,
@@ -289,6 +317,9 @@ class GestureEngine:
             pending_mode=raw if pending else None,
             scroll_origin=self._scroll_origin,
             scroll_rate=(float(self._scroll_rate[0]), float(self._scroll_rate[1])),
+            media_active=self._media_active,
+            knob_offset=self._media.knob_offset if self._mode is Mode.MEDIA else None,
+            volume_rate=self._media.volume_rate if self._mode is Mode.MEDIA else 0.0,
         )
 
     # -- tracking loss -----------------------------------------------------------------------
@@ -296,16 +327,22 @@ class GestureEngine:
         if self._last_seen is not None and t - self._last_seen <= self.cfg.hand_lost_grace:
             # Short dropout (motion blur, fingers crossing the palm): hold everything as it is.
             return EngineOutput(
-                self._mode, "TRACKING LOST", cursor_frozen=True, left_state=self._left
+                self._mode,
+                "TRACKING LOST",
+                cursor_frozen=True,
+                left_state=self._left,
+                media_active=self._media_active,
             )
         actions = self.reset() if self._mode is not Mode.NO_HAND else []
-        return EngineOutput(Mode.NO_HAND, "NO HAND", actions)
+        return EngineOutput(Mode.NO_HAND, "NO HAND", actions, media_active=self._media_active)
 
     # -- posture -----------------------------------------------------------------------------
     def _classify(self, ext: dict[Finger, bool], joined: bool, f: HandFeatures) -> Mode:
         i, m, r, p = (ext[Finger.INDEX], ext[Finger.MIDDLE], ext[Finger.RING], ext[Finger.PINKY])
         if not (i or m or r or p) and f.pinch[Finger.INDEX] > self.cfg.pinch_enter:
             return Mode.CLUTCH  # fist (and not a pinch made with curled fingers)
+        if p and not (i or m or r):
+            return Mode.SWITCH  # shaka: only the pinky (and the thumb) out
         if i and p and not m and not r:
             return Mode.ZOOM
         if i and m and not r and not p and joined:
@@ -340,6 +377,10 @@ class GestureEngine:
             self._exit_scroll()
         elif previous is Mode.ZOOM:
             self._exit_zoom()
+        elif previous is Mode.SWITCH:
+            self._switch_since, self._switch_done = None, False
+        elif previous is Mode.MEDIA:
+            self._media.reset()
         if self._mode is Mode.POINTER:
             self._armed = dict.fromkeys(PINCH_FINGERS, False)
         return actions
@@ -492,6 +533,17 @@ class GestureEngine:
         self._zoom_ref = None
         self._zoom_filter.reset()
 
+    # -- SWITCH: mouse <-> media -------------------------------------------------------------
+    def _switch(self, t: float) -> None:
+        if self._switch_since is None:
+            self._switch_since = t
+        # Toggles once per hold; the shaka has to be released before it can toggle again.
+        if not self._switch_done and t - self._switch_since >= self.media_cfg.toggle_hold:
+            self._switch_done = True
+            self._media_active = not self._media_active
+            self._media.reset()
+            self._set_flash("MEDIA MODE" if self._media_active else "MOUSE MODE", t, 1.0)
+
     # -- HUD label ---------------------------------------------------------------------------
     def _set_flash(self, text: str, t: float, duration: float = 0.35) -> None:
         self._flash, self._flash_until = text, t + duration
@@ -499,6 +551,11 @@ class GestureEngine:
     def _label(self, t: float) -> str:
         if t < self._flash_until:
             return self._flash
+        if self._mode is Mode.SWITCH:
+            return f"HOLD -> {'MOUSE' if self._media_active else 'MEDIA'}"
+        if self._mode is Mode.MEDIA:
+            rate = self._media.volume_rate
+            return "VOL +" if rate > 0 else "VOL -" if rate < 0 else "MEDIA"
         if self._mode is not Mode.POINTER:
             return self._mode.value
         if self._left is LeftState.PENDING:
