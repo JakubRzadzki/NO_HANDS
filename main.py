@@ -3,6 +3,7 @@
 python main.py                     # hand gestures, webcam 0 with the HUD
 python main.py --dry-run           # recognise gestures without touching the real mouse
 python main.py --relative          # mouse-like relative mode: a fist "lifts" the mouse
+python main.py --slides            # presentations: quick hand strokes = slides and zoom
 python main.py --eyes              # hands-free: the cursor follows your gaze, blink to click
 python main.py --eyes --eyes-pointer nose   # cursor follows the nose, blink to click
 python main.py --head              # head movements press the arrow keys
@@ -35,6 +36,7 @@ from src.head_engine import HeadArrows
 from src.hud import FaceHud, Hud, LoopStats
 from src.os_controller import OSController, detect_screen_size, enable_dpi_awareness
 from src.pointer import CursorMapper, Roi
+from src.slide_gestures import SlideGestures
 
 log = logging.getLogger("virtual_mouse")
 FALLBACK_SCREEN = (1920, 1080)
@@ -56,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Hands-free mouse: hand gestures (default), eyes (--eyes) or head (--head)."
     )
     modes = p.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--slides",
+        action="store_true",
+        help="presentations: quick hand stroke left/right = slide, up/down = zoom in/out",
+    )
     modes.add_argument(
         "--eyes", action="store_true", help="eyes only: look to move the cursor, blink to click"
     )
@@ -111,7 +118,9 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     if (args.eyes_pointer or args.recalibrate) and not args.eyes:
         raise ValueError("--eyes-pointer and --recalibrate only work together with --eyes")
     cfg = AppConfig()
-    cfg.input_mode = "eyes" if args.eyes else "head" if args.head else "hands"
+    cfg.input_mode = (
+        "eyes" if args.eyes else "head" if args.head else "slides" if args.slides else "hands"
+    )
     if args.eyes_pointer:
         cfg.eyes.pointer = args.eyes_pointer
     cfg.eyes.recalibrate = args.recalibrate
@@ -228,6 +237,8 @@ def _describe(cfg: AppConfig) -> str:
         return f"eyes ({cfg.eyes.pointer} pointer)"
     if cfg.input_mode == "head":
         return "head (arrow keys)"
+    if cfg.input_mode == "slides":
+        return "hand strokes (slides and zoom)"
     return f"hands ({cfg.pointer.mode} pointer)"
 
 
@@ -260,7 +271,7 @@ def run(cfg: AppConfig) -> int:
         session = _Session(cfg, camera, controller, screen, stop, pause_toggle)
         # release_all is registered after the tracker, so it runs first on *any* exit (normal,
         # exception, Ctrl+C): a mouse button or Ctrl key must never stay held after we are gone.
-        if cfg.input_mode == "hands":
+        if cfg.input_mode in ("hands", "slides"):
             hands = stack.enter_context(HandTracker(cfg.tracker))
             stack.callback(controller.release_all)
             return _hands_loop(session, hands)
@@ -272,10 +283,16 @@ def run(cfg: AppConfig) -> int:
 def _hands_loop(s: _Session, tracker: HandTracker) -> int:
     cfg, camera, controller = s.cfg, s.camera, s.controller
     p = cfg.pointer
-    roi = Roi.for_screen(camera.frame_size, s.screen, p.roi_width, p.roi_center, p.sensitivity)
-    mapper = CursorMapper(roi, s.screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
-    engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
-    hud = Hud(cfg.gesture, cfg.hud.show_landmarks) if cfg.hud.enabled else None
+    roi: Roi | None = None
+    engine: GestureEngine | SlideGestures
+    if cfg.input_mode == "slides":
+        engine = SlideGestures(cfg.slides, cfg.gesture)  # no cursor: the hand only swipes
+    else:
+        roi = Roi.for_screen(camera.frame_size, s.screen, p.roi_width, p.roi_center, p.sensitivity)
+        mapper = CursorMapper(roi, s.screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
+        engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
+    slides = cfg.slides if cfg.input_mode == "slides" else None
+    hud = Hud(cfg.gesture, cfg.hud.show_landmarks, slides) if cfg.hud.enabled else None
     window = _WindowWatch(cfg.hud.window_name)
     if hud is not None:
         cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)

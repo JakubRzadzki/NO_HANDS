@@ -52,6 +52,7 @@ class Mode(str, Enum):
     CLUTCH = "CLUTCH"
     SWITCH = "SWITCH"  # shaka held: toggles between mouse and media mode
     MEDIA = "MEDIA"  # music control instead of the mouse
+    SLIDES = "SLIDES"  # --slides: hand strokes change slides and zoom (src/slide_gestures.py)
 
 
 class LeftState(str, Enum):
@@ -174,6 +175,8 @@ class EngineOutput:
     media_active: bool = False  # media mode instead of mouse mode
     knob_offset: float | None = None  # degrees from neutral, for the HUD
     volume_rate: float = 0.0  # volume key presses per second, for the HUD
+    trail: list[tuple[float, float]] = field(default_factory=list)  # --slides: wrist path, px
+    stroke: tuple[float, float] | None = None  # --slides: stroke so far, palm lengths
 
 
 class GestureEngine:

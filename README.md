@@ -1,10 +1,11 @@
 # AI Virtual Mouse
 
-Hands-free control in front of a webcam: with hand gestures, with your eyes (`--eyes`) or with
-head movements (`--head`). MediaPipe (hand / face tracking) → gesture state machines → pynput
-(injects mouse/keyboard events into the OS). Hand mode: cursor movement, left/right/double
-click, drag and drop, vertical and horizontal scrolling, zoom (Ctrl + wheel), a clutch, and a
-media mode with previous/next track, volume and play/pause. Runs on the CPU only.
+Hands-free control in front of a webcam: with hand gestures, with hand strokes for
+presentations (`--slides`), with your eyes (`--eyes`) or with head movements (`--head`).
+MediaPipe (hand / face tracking) → gesture state machines → pynput (injects mouse/keyboard
+events into the OS). Hand mode: cursor movement, left/right/double click, drag and drop,
+vertical and horizontal scrolling, zoom (Ctrl + wheel), a clutch, and a media mode with
+previous/next track, volume and play/pause. Runs on the CPU only.
 
 ## Quick start
 
@@ -26,6 +27,10 @@ python main.py --dry-run         # first without mouse control: check the gestur
 
 ```bash
 python main.py                   # the real run
+```
+
+```bash
+python main.py --slides          # presentations: hand strokes = slides and zoom
 ```
 
 ```bash
@@ -79,7 +84,38 @@ the wrist while the wrist itself stays put.
 
 Media keys act system-wide: Spotify, YouTube in a browser and other players react without
 having focus. With `MediaConfig.swipe_action = "arrows"` swipes send the Left/Right arrow keys
-instead (slides, photo viewers, seeking in YouTube).
+instead (photo viewers, seeking in YouTube). For presentations there is `--slides`.
+
+## Slides (`--slides`)
+
+A presenter's remote in your hand: PowerPoint, Google Slides, Keynote, PDF viewers, photo
+viewers. There is no cursor in this mode; the hand only makes strokes.
+
+| Action | Hand stroke |
+| --- | --- |
+| Previous / next slide | a quick stroke of the open hand left / right (Left / Right arrow) |
+| Zoom in / out | a quick stroke up / down (Ctrl + mouse wheel, 2 steps) |
+
+A stroke counts only if it:
+
+- starts and ends with the hand still, inside the frame;
+- is quick (at least ~9 cm, one palm length, in under ~0.6 s);
+- runs mostly along one axis;
+- is made with an open hand (at least 3 fingers straight).
+
+The event fires ~0.2 s after the hand stops. These rules are what keep a talk free of wrong
+slides:
+- **Bringing the hand back** after a swipe is ignored. An opposite stroke within 0.8 s of a swipe
+  counts as the way back, so swipe, return, swipe, return turns three slides forward.
+- **Raising the hand** into view or **lowering it** out of view does nothing. Those strokes never
+  start, or never end, with the hand resting in the frame.
+- **To move the hand without swiping**, make a fist or move it slowly.
+- **Hand distance:** it works the same close to the camera and far from it, because distances
+  are in palm lengths.
+
+Thresholds are in `SlidesConfig` (`config.py`). The HUD shows the stroke as it happens and the
+wrist's path. Zoom uses Ctrl + wheel: PowerPoint's slide show, browsers and PDF viewers zoom
+with it. In mouse mode there is also the "rock" zoom gesture (see the table above).
 
 ## Eye control (`--eyes`)
 
@@ -173,6 +209,7 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 | `--sensitivity X` | cursor gain; `1.5` = a third less hand travel for the same cursor travel |
 | `--relative` | relative mode like a real mouse (fist = lift the mouse) |
 | `--dry-run` | recognize gestures without touching the real mouse |
+| `--slides` | presentations: hand strokes left / right = slides, up / down = zoom |
 | `--eyes` | eye control (see above) |
 | `--eyes-pointer gaze/nose` | with `--eyes`: the cursor follows the gaze (default) or the nose |
 | `--recalibrate` | with `--eyes`: redo the gaze calibration |
@@ -205,6 +242,7 @@ camera thread ──newest frame──▶ HandTracker ──HandObservation─�
 | `src/gesture_engine.py` | hand features, debounced posture classification, hysteresis latches, clicks, scroll, zoom |
 | `src/os_controller.py` | executes actions, tracks held buttons, `release_all()`, screen size |
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
+| `src/slide_gestures.py` | `--slides`: stroke segmentation (rest → quick stroke → rest), slides and zoom |
 | `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), 3D head pose, gaze features |
 | `src/gaze.py` | head-compensated gaze model, the 3-phase calibration procedure, the fixation filter |
 | `src/calibration_ui.py` | the full-screen calibration window |

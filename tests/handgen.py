@@ -182,7 +182,7 @@ def make_engine(
 class Driver:
     """Feeds poses to an engine at a fixed frame rate and records every output."""
 
-    def __init__(self, engine: GestureEngine, fps: float = 60.0) -> None:
+    def __init__(self, engine: Any, fps: float = 60.0) -> None:  # GestureEngine, SlideGestures
         self.engine = engine
         self.dt = 1.0 / fps
         self.t = 0.0
