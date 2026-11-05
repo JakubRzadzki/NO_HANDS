@@ -5,6 +5,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-# Downloaded automatically on first run (~8 MB)
+# Downloaded / created on first run: MediaPipe models, gaze calibration
 models/*.task
 models/*.part
+models/*.json
