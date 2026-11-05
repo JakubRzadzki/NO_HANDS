@@ -98,6 +98,28 @@ class GestureConfig:
 
 
 @dataclass
+class MediaConfig:
+    """Media mode: music control instead of the mouse. Toggled by holding the "shaka" (thumb and
+    pinky out, other fingers curled). It is a separate mode because in mouse mode moving the open
+    hand sideways already *is* moving the cursor."""
+
+    toggle_hold: float = 0.6  # s the shaka must be held to switch mouse <-> media mode
+    # Swipe: the wrist travels this many palm lengths sideways within swipe_window.
+    swipe_distance: float = 1.2
+    swipe_window: float = 0.30  # s
+    swipe_cooldown: float = 0.6  # s: swallows the return stroke after a swipe
+    swipe_action: str = "tracks"  # "tracks": previous/next track, "arrows": Left/Right keys
+    # Volume knob: turn the hand. Works like a spring-loaded jog dial: the further past the dead
+    # zone, the faster the volume changes (a wrist only turns about +-70 degrees).
+    knob_deadzone_deg: float = 25.0
+    knob_rate: float = 0.25  # volume key presses per second, per degree beyond the dead zone
+    knob_max_rate: float = 10.0  # presses per second (Windows: 1 press = 2% volume)
+    knob_max_wrist_speed: float = 1.5  # palm lengths/s: a faster hand is moving, not turning
+    knob_invert: bool = False  # True if "turn right" should lower the volume
+    play_pause_cooldown: float = 0.8  # s between two fist (play/pause) gestures
+
+
+@dataclass
 class OutputConfig:
     dry_run: bool = False  # recognise gestures but never touch the real mouse/keyboard
     screen_size: tuple[int, int] | None = None  # None = auto-detect the primary monitor
@@ -128,13 +150,14 @@ class AppConfig:
     filter: FilterConfig = field(default_factory=FilterConfig)
     pointer: PointerConfig = field(default_factory=PointerConfig)
     gesture: GestureConfig = field(default_factory=GestureConfig)
+    media: MediaConfig = field(default_factory=MediaConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     hud: HudConfig = field(default_factory=HudConfig)
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)
 
     def validate(self) -> None:
         """Fail fast on inconsistent settings instead of running a subtly broken controller."""
-        g, p, f, c = self.gesture, self.pointer, self.filter, self.camera
+        g, p, f, c, m = self.gesture, self.pointer, self.filter, self.camera, self.media
         checks = [
             (0 < g.pinch_enter < g.pinch_exit, "need 0 < pinch_enter < pinch_exit"),
             (
@@ -158,6 +181,14 @@ class AppConfig:
             (f.beta >= 0, "filter beta must be >= 0"),
             (c.width > 0 and c.height > 0 and c.fps > 0, "camera width/height/fps must be > 0"),
             (self.output.zoom_modifier in ("ctrl", "cmd"), "zoom_modifier must be ctrl or cmd"),
+            (m.toggle_hold > 0, "media.toggle_hold must be > 0"),
+            (
+                m.swipe_distance > 0 and m.swipe_window > 0,
+                "media swipe distance/window must be > 0",
+            ),
+            (m.swipe_action in ("tracks", "arrows"), "media.swipe_action must be tracks or arrows"),
+            (0 <= m.knob_deadzone_deg < 90, "media.knob_deadzone_deg must be in [0, 90)"),
+            (m.knob_rate > 0 and m.knob_max_rate > 0, "media knob rates must be > 0"),
         ]
         errors = [message for ok, message in checks if not ok]
         if errors:
