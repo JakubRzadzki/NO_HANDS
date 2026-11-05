@@ -87,46 +87,82 @@ A mouse without hands: look where the cursor should go and click with your eyes.
 
 | Action | Eye gesture |
 | --- | --- |
-| Move the cursor | look at the spot (gaze pointer), or point with your nose (`--eyes-pointer nose`) |
+| Move the cursor | look at the spot: the cursor jumps there and stays (or `--eyes-pointer nose`) |
+| Fine-tune the cursor | turn the head slightly: ~40 px per degree, up to ~290 px |
 | Left click | a deliberate blink with both eyes, 0.35–1 s |
 | Double click | a second deliberate blink within 1.2 s |
 | Right click | wink with the right eye (≥ 0.3 s) |
 | Scroll mode on / off | wink with the left eye; while on, look above / below the screen centre to scroll |
 | Pause / resume | close both eyes for 1.5 s |
 
-- **Natural blinks** (0.1–0.3 s) are ignored. A gesture counts when the eyes open again, and the
-  cursor stays frozen while they close, so a click lands where you looked.
-- **Calibration:** the first `--eyes` run shows 9 dots full screen; look at each until it moves
-  on (~15 s). It is saved to `models/gaze_calibration.json`. Redo it with `--recalibrate` or `c`
-  in the HUD after moving the laptop, the camera or your chair.
-- **Precision:** a webcam sees each eye as ~50 px, so one pixel of iris noise moves the gaze
-  point by ~100 screen px. A fixation filter keeps the cursor still while you look at
-  something and jumps when your eyes do, but small targets stay hard. Keep your head still and
-  use good light; 1920×1080 helps. For precise work use `--eyes-pointer nose`: the cursor
-  follows your head, the eye gestures still click.
-- **Openness** is relative to each eye's own open size, learned while running, so narrow and wide
-  eyes both work. Looking down lowers the lids to about 0.6–0.75 of open, safely above the 0.4
-  "closed" threshold. The HUD shows both eyes' openness live. `EyeConfig.swap_winks = True`
+**What to expect from a laptop webcam.** The camera sees each eye as 50–75 px, and the
+iris moves only ~0.1 of the eye's width across the whole screen. One pixel of iris noise is ~100
+screen pixels. Expect the cursor to land within about 1–3 cm of where you look. That is fine
+for buttons, tabs, taskbar icons and big links, not for small text links. Therefore:
+
+- **The cursor jumps with your eyes, then stays put.** When your eyes jump to a new spot (a
+  saccade), the cursor follows within ~0.1 s, averages your gaze for 0.6 s and then freezes.
+  Looking around inside that spot, including at the cursor itself, does not move it. That
+  stops the classic gaze cursor that "runs away" when you look at it. Small gaze shifts (below
+  the jump radius shown in the log, about 3× the measured jitter) move it only if you keep
+  looking there for 0.6 s.
+- **The last few centimetres are done with the head** ("MAGIC pointing"): after a jump, turn
+  the head slightly towards the target and the cursor follows (`EyeConfig.head_nudge`, 0 =
+  off). Every new gaze jump resets this, so it never accumulates.
+- **Head movement is compensated.** Where you look depends on the eyes *and* on where the head
+  points and sits. The gaze model uses MediaPipe's 3D head pose, so turning, leaning or moving
+  closer while looking at the same spot keeps the cursor there. In simulation that cut the
+  error under normal head movement from ~300 px (eyes only, the previous version) to ~45 px.
+
+**Calibration (~30 s, first run).** Full screen, three phases:
+
+1. 9 dots: look at each until it moves on, head still.
+2. One dot in the middle: keep your eyes on it and turn the head where the arrow points
+   (left, right, up, down). This teaches the model to compensate head movement, so do turn
+   properly. If the head barely moved, the log warns you.
+3. 4 check dots: the accuracy is measured on points the fit never saw. It is shown at the end
+   and in the HUD (`accuracy ~45 px, jitter ~90 px`).
+
+The result is saved to `models/gaze_calibration.json`. Redo it with `--recalibrate` or `c` in
+the HUD when the accuracy is poor, after moving the laptop or the camera, or when the light
+changed a lot.
+
+**Tips:**
+- Light on your face (a window or a lamp in front of you, not behind you) matters most.
+- Use 1920×1080 (the default): more pixels per eye.
+- Sit at your usual distance during calibration.
+- For precise work there is `--eyes-pointer nose`: the cursor follows your nose, the eye
+  gestures still click.
+
+**Blinks and winks:**
+- **Natural blinks** (0.1–0.3 s) are ignored. A gesture counts when the eyes open again, and
+  the cursor stays frozen while they close, so a click lands where you looked.
+- **Openness** is relative to each eye's own open size, learned while running, so narrow and
+  wide eyes both work. Looking down lowers the lids to about 0.6–0.75 of open, safely above the
+  0.4 "closed" threshold. The HUD shows both eyes' openness live. `EyeConfig.swap_winks = True`
   swaps the winks.
 
 ## Head control (`--head`)
 
-Head movements press the arrow keys: slides, photo viewers, video players, lists.
+Quick head movements press the arrow keys: slides, photo viewers, video players, lists.
 
 | Action | Head movement |
 | --- | --- |
-| Left / Right arrow | turn the head left / right (~15°) |
-| Up / Down arrow | tilt the head up / nod down (~10°) |
-| Repeat | keep the head there: the key repeats after 0.6 s, every 0.25 s |
+| Left / Right arrow | a quick turn left / right (15°) |
+| Up / Down arrow | a quick tilt up / nod down (12°) |
 | Pause / resume | close both eyes for 1.5 s |
 
-- Each move presses its key once and re-arms only when the head is back near the neutral pose,
-  so returning to the centre never presses the opposite arrow.
+- **Like a swipe:** the head has to get from the neutral pose past the threshold within 0.6 s.
+  Slowly turning to look at something, or shifting in your chair, presses nothing.
+- Each move presses its key once. It re-arms when the head is back near neutral, so returning
+  to the centre never presses the opposite arrow. Holding the head there does not repeat the key
+  (`HeadConfig.repeat_delay > 0` turns repeat on).
+- The angles come from MediaPipe's 3D head pose in degrees. They do not depend on how far you
+  sit, and tilting the head sideways (roll) is ignored. The HUD shows them live.
+  - The previous version measured the nose's offset from the eyes in the image. That gave the
+    wrong direction as soon as the head was also tilted.
 - The neutral pose is learned in the first half second (hold still) and follows slow posture
-  changes. Pause before turning to talk to someone.
-- The pose is the nose tip's offset from the midpoint between the eyes, in eye distances,
-  measured along the eye line: it does not depend on how far you sit, and tilting the head
-  sideways is not a turn.
+  changes. A quick look away is a quick turn too: pause before turning to talk to someone.
 
 ## Options
 
@@ -169,16 +205,20 @@ camera thread ──newest frame──▶ HandTracker ──HandObservation─�
 | `src/gesture_engine.py` | hand features, debounced posture classification, hysteresis latches, clicks, scroll, zoom |
 | `src/os_controller.py` | executes actions, tracks held buttons, `release_all()`, screen size |
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
-| `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), head pose |
-| `src/gaze.py` | gaze calibration (quadratic fit, saved as JSON) and the fixation filter |
-| `src/calibration_ui.py` | the full-screen 9-dot calibration |
-| `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, gaze or nose pointer, scroll, pause |
-| `src/head_engine.py` | `--head`: head pose to arrow keys with hysteresis and key repeat |
+| `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), 3D head pose, gaze features |
+| `src/gaze.py` | head-compensated gaze model, the 3-phase calibration procedure, the fixation filter |
+| `src/calibration_ui.py` | the full-screen calibration window |
+| `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, gaze (+ head nudge) or nose pointer, scroll, pause |
+| `src/head_engine.py` | `--head`: head pose in degrees to arrow keys, swipe-like, with hysteresis |
 | `src/hud.py` | preview: ROI in the state's color, pinch proximity lines, FPS, latency, metrics |
 
 The gesture engine never calls the OS: it returns action objects (`Click`, `Press`, `Scroll`…).
 That is why the whole state machine is tested on synthetic hands (`tests/handgen.py`), with no
-camera and no display.
+camera and no display. The eye and head modes work the same way: synthetic faces
+(`tests/facegen.py`) and a simulated laptop user (`tests/gazesim.py`). The simulated user has
+real geometry: a 15.6" screen, the camera above it, eyes that turn inside a moving head, webcam
+noise that wanders from frame to frame. The gaze model and the fixation filter are tested and
+tuned against it.
 
 ## Engineering decisions
 
