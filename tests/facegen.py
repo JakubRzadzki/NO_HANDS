@@ -15,7 +15,7 @@ import numpy as np
 
 from src.eye_engine import FaceOutput
 from src.face_tracker import EYE_OUTLINES, IRIS_CENTERS, NOSE_TIP, FaceObservation
-from src.gaze import GazeCalibration
+from src.gaze import GazeModel
 from src.os_controller import Action
 
 FRAME = (1280, 720)
@@ -73,21 +73,25 @@ def make_face(
 
 
 def gaze_for(x: float, y: float, screen: tuple[int, int] = SCREEN) -> tuple[float, float]:
-    """The synthetic iris offset of someone looking at screen pixel (x, y)."""
+    """The synthetic iris offset of someone looking at screen pixel (x, y), head at rest."""
     return (
         (x / (screen[0] - 1) - 0.5) * GAZE_RANGE[0],
         (y / (screen[1] - 1) - 0.5) * GAZE_RANGE[1],
     )
 
 
-def linear_calibration(screen: tuple[int, int] = SCREEN) -> GazeCalibration:
-    """A calibration fitted on a 3x3 grid of the synthetic gaze above."""
+def linear_calibration(screen: tuple[int, int] = SCREEN, noise: float = 0.0) -> GazeModel:
+    """A gaze model fitted on a 5x5 grid of the synthetic gaze above (head at rest), with the
+    given calibration jitter (px), which sets the automatic fixation radius."""
     targets = [
         (fx * (screen[0] - 1), fy * (screen[1] - 1))
-        for fy in (0.1, 0.5, 0.9)
-        for fx in (0.1, 0.5, 0.9)
+        for fy in np.linspace(0.05, 0.95, 5)
+        for fx in np.linspace(0.05, 0.95, 5)
     ]
-    return GazeCalibration.fit([gaze_for(x, y, screen) for x, y in targets], targets, screen)
+    features = [(*gaze_for(x, y, screen), 0.0, 0.0, 0.0, 0.0) for x, y in targets]
+    model = GazeModel.fit(features, targets, screen, [60.0] * len(targets))
+    model.noise = noise
+    return model
 
 
 class FaceDriver:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
@@ -13,7 +14,7 @@ from src.camera import FramePacket, ProbeResult
 from src.face_tracker import FaceObservation
 from src.hand_tracker import HandObservation
 from src.os_controller import OSController
-from tests.facegen import make_face
+from tests.facegen import gaze_for, linear_calibration, make_face
 from tests.handgen import OPEN, make_obs, pinch
 from tests.test_os_controller import RecordingBackend
 
@@ -173,14 +174,18 @@ class ScriptedFace:
 
 
 def run_face_mode(
-    monkeypatch: pytest.MonkeyPatch, mode: str, script: list[tuple[int, dict[str, Any]]]
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    script: list[tuple[int, dict[str, Any]]],
+    cfg: AppConfig | None = None,
 ) -> None:
     monkeypatch.setattr(main, "ThreadedCamera", FakeCamera)
     monkeypatch.setattr(main, "FaceTracker", ScriptedFace)
     monkeypatch.setattr(ScriptedFace, "script", script)
-    cfg = headless_config()
+    if cfg is None:
+        cfg = headless_config()
+        cfg.eyes.pointer = "nose"  # the gaze pointer would open the calibration window
     cfg.input_mode = mode
-    cfg.eyes.pointer = "nose"  # the gaze pointer would open the calibration window
     with pytest.raises(KeyboardInterrupt):
         main.run(cfg)
 
@@ -188,6 +193,18 @@ def run_face_mode(
 def test_head_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch) -> None:
     run_face_mode(monkeypatch, "head", [(30, {}), (10, {"yaw": 22.0})])  # 60 FPS fake camera
     assert ("tap", "right") in backend.calls
+
+
+def test_gaze_mode_end_to_end_with_a_saved_calibration(
+    backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = headless_config()
+    cfg.eyes.calibration_path = str(tmp_path / "gaze.json")
+    linear_calibration().save(cfg.eyes.calibration_path)  # no calibration window needed
+    look = {"gaze": gaze_for(1500, 300)}
+    run_face_mode(monkeypatch, "eyes", [(60, {}), (60, look)], cfg)
+    moves = [c[1:] for c in backend.calls if c[0] == "move_to"]
+    assert moves and moves[-1] == pytest.approx((1500, 300), abs=25)
 
 
 def test_eyes_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch) -> None:

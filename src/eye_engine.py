@@ -1,6 +1,7 @@
 """--eyes: hands-free mouse. The cursor follows the gaze (or the nose), eye gestures click.
 
-    look at a point ............ cursor goes there (gaze) / move the head (nose pointer)
+    look at a point ............ cursor jumps there and stays (gaze) / follows the nose
+    small head turn ............ nudges the cursor the last bit (gaze pointer)
     deliberate blink 0.35-1 s .. left click; a second one within 1.2 s = double click
     right wink ................. right click
     left wink .................. scroll mode on/off: look above / below the screen centre
@@ -21,14 +22,17 @@ from enum import Enum
 import numpy as np
 
 from config import EyeConfig, FaceConfig, FilterConfig
-from src.face_tracker import NOSE_TIP, EyeMeasure, FaceObservation, gaze_feature, measure_eyes
-from src.gaze import FixationFilter, GazeCalibration
+from src.face_tracker import NOSE_TIP, EyeMeasure, FaceObservation, gaze_features, measure_eyes
+from src.gaze import FixationFilter, GazeModel
 from src.gesture_engine import HysteresisLatch
 from src.os_controller import Action, Click, MoveTo, Scroll
 from src.pointer import CursorMapper, Roi
+from src.smoother import OneEuroFilter
 
 REOPEN_SETTLE = 0.15  # s after the eyes open before the gaze is trusted again
 NOSE_NEUTRAL_FRAMES = 10  # frames that define the nose pointer's neutral position
+RADIUS_SIGMAS = 3.0  # automatic fixation radius = this many times the calibration jitter
+RADIUS_LIMITS = (0.03, 0.20)  # ... kept within these fractions of the screen width
 
 
 class FaceMode(str, Enum):
@@ -48,7 +52,8 @@ class FaceOutput:
     openness: tuple[float, float] = (1.0, 1.0)
     closed: tuple[bool, bool] = (False, False)
     pointer: tuple[float, float] | None = None  # screen px the gaze / nose points at
-    feature: tuple[float, float] | None = None  # gaze feature (--eyes) or head offset (--head)
+    feature: tuple[float, float] | None = None  # iris offset (--eyes) or head offset (--head)
+    nudge: tuple[float, float] | None = None  # px the head adds to the gaze point (--eyes)
 
 
 class _OpenBaseline:
@@ -121,6 +126,39 @@ class ClosureDetector:
         return kind, duration
 
 
+class HeadNudge:
+    """MAGIC pointing (Zhai et al. 1999): the eyes jump the cursor close to the target, a small
+    head turn moves it the rest of the way.
+
+    The offset is the head turn since the last gaze jump, in px. Right after a jump the head is
+    often still finishing its own part of the gaze shift, so for ``SETTLE`` seconds the
+    reference follows the head instead of moving the cursor."""
+
+    SETTLE = 0.4  # s
+
+    def __init__(self, gain_px_per_deg: float, max_px: float, filter_cfg: FilterConfig) -> None:
+        self.gain = gain_px_per_deg
+        self.max = max_px
+        self._filter = OneEuroFilter(filter_cfg.min_cutoff, filter_cfg.beta, filter_cfg.d_cutoff)
+        self._ref: np.ndarray | None = None
+        self._settle_until = -math.inf
+
+    def restart(self, t: float) -> None:
+        self._ref = None
+        self._settle_until = t + self.SETTLE
+        self._filter.reset()
+
+    def update(self, head: tuple[float, float], t: float) -> tuple[float, float]:
+        if self.gain <= 0:
+            return 0.0, 0.0
+        angles = np.asarray(head, dtype=np.float64)
+        if self._ref is None or t < self._settle_until:
+            self._ref = angles
+        offset = np.clip(self.gain * (angles - self._ref), -self.max, self.max)
+        x, y = self._filter(offset, t)
+        return float(x), float(y)
+
+
 class EyeEngine:
     def __init__(
         self,
@@ -128,21 +166,25 @@ class EyeEngine:
         face: FaceConfig,
         screen_size: tuple[int, int],
         filter_cfg: FilterConfig,
-        calibration: GazeCalibration | None = None,
+        model: GazeModel | None = None,
         mirrored: bool = True,
     ) -> None:
-        if cfg.pointer == "gaze" and calibration is None:
+        if cfg.pointer == "gaze" and model is None:
             raise ValueError("the gaze pointer needs a calibration")
         self.cfg = cfg
         self.face = face
         self.screen_w, self.screen_h = screen_size
-        self.calibration = calibration
+        self.model = model
         self.mirrored = mirrored
         self._filter_cfg = filter_cfg
         self._closure = ClosureDetector(face)
         self._fixation = FixationFilter(
-            cfg.fixation_radius * self.screen_w, cfg.saccade_frames, cfg.fixation_smoothing
+            self._fixation_radius(), cfg.saccade_frames, cfg.fixation_settle, cfg.fixation_dwell
         )
+        self._nudge = HeadNudge(
+            cfg.head_nudge * self.screen_w, cfg.head_nudge_max * self.screen_w, filter_cfg
+        )
+        self._nudge_offset: tuple[float, float] | None = None
         self._nose_samples: list[tuple[float, float]] = []
         self._nose_mapper: CursorMapper | None = None
         self._paused = False
@@ -163,6 +205,19 @@ class EyeEngine:
     def scrolling(self) -> bool:
         return self._scroll
 
+    @property
+    def fixation_radius(self) -> float:
+        return self._fixation.radius
+
+    def _fixation_radius(self) -> float:
+        """px. Automatic: 3x the jitter measured at calibration - at that distance noise alone
+        practically never looks like a jump, and a real jump of that size is still easy."""
+        w = self.screen_w
+        if self.cfg.fixation_radius > 0:
+            return self.cfg.fixation_radius * w
+        noise = self.model.noise if self.model is not None else 0.0
+        return min(max(RADIUS_SIGMAS * noise, RADIUS_LIMITS[0] * w), RADIUS_LIMITS[1] * w)
+
     def reset(self) -> None:
         """Forget motion state (global pause, recalibration). Pause/scroll modes are kept."""
         self._closure.cancel()
@@ -172,8 +227,9 @@ class EyeEngine:
         self._last_pos = None
         self._last_t = None
 
-    def set_calibration(self, calibration: GazeCalibration) -> None:
-        self.calibration = calibration
+    def set_model(self, model: GazeModel) -> None:
+        self.model = model
+        self._fixation.radius = self._fixation_radius()
         self.reset()
 
     # -- per frame -----------------------------------------------------------------------
@@ -192,9 +248,9 @@ class EyeEngine:
         if not self._closure.fully_open:
             self._settle_until = t + REOPEN_SETTLE  # eyelids moving: iris landmarks unreliable
         pointer: tuple[float, float] | None = None
-        feature = gaze_feature(left, right)
+        features = gaze_features(obs, left, right, self.mirrored)
         if t >= self._settle_until:
-            pointer = self._pointer(obs, feature, t)
+            pointer = self._pointer(obs, features, t)
         if pointer is not None and not self._paused:
             if self._scroll:
                 actions += self._scroll_actions(pointer[1], dt)
@@ -218,7 +274,8 @@ class EyeEngine:
             self._closure.openness,
             self._closure.closed,
             pointer,
-            feature,
+            (features[0], features[1]),
+            self._nudge_offset if self.cfg.pointer == "gaze" else None,
         )
 
     # -- gestures --------------------------------------------------------------------------
@@ -261,11 +318,17 @@ class EyeEngine:
 
     # -- pointer ---------------------------------------------------------------------------
     def _pointer(
-        self, obs: FaceObservation, feature: tuple[float, float], t: float
+        self, obs: FaceObservation, features: tuple[float, ...], t: float
     ) -> tuple[float, float] | None:
         if self.cfg.pointer == "gaze":
-            assert self.calibration is not None
-            return self._fixation.update(self.calibration.predict(feature))
+            assert self.model is not None
+            gaze = self.model.predict(features, obs.head_position[2])
+            x, y = self._fixation.update(gaze, t)
+            if self._fixation.jumped:
+                self._nudge.restart(t)
+            dx, dy = self._nudge.update((obs.head[0], obs.head[1]), t)
+            self._nudge_offset = (dx, dy)
+            return x + dx, y + dy
         nose = (float(obs.norm[NOSE_TIP, 0]), float(obs.norm[NOSE_TIP, 1]))
         if self._nose_mapper is None:
             self._nose_samples.append(nose)

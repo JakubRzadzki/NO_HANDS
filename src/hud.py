@@ -246,12 +246,12 @@ class FaceHud:
     """Preview for --eyes / --head: eye outlines, irises, nose, eye openness and the mode."""
 
     def __init__(
-        self, mode: str, face: FaceConfig, head: HeadConfig, calibration_error: float | None
+        self, mode: str, face: FaceConfig, head: HeadConfig, calibration: str | None = None
     ) -> None:
         self.mode = mode
         self.face = face
         self.head = head
-        self.calibration_error = calibration_error
+        self.calibration = calibration  # one-line quality summary of the gaze calibration
 
     def draw(
         self,
@@ -303,9 +303,20 @@ class FaceHud:
                 )
             lines.append(("quick turn / nod = arrow key", 0.4, GRAY))
         else:
-            if self.calibration_error is not None:
+            if self.calibration is not None:
+                lines.append((f"gaze: {self.calibration}", 0.45, WHITE))
+            if obs is not None:
+                yaw, pitch, _ = obs.head
+                nudge = ""
+                if out.nudge is not None:
+                    nudge = f"   head nudge {out.nudge[0]:+4.0f} {out.nudge[1]:+4.0f} px"
                 lines.append(
-                    (f"gaze calibration error ~{self.calibration_error:.0f} px", 0.45, WHITE)
+                    (
+                        f"head yaw {yaw:+4.0f} pitch {pitch:+4.0f} deg  "
+                        f"distance {obs.head_position[2]:3.0f} cm{nudge}",
+                        0.45,
+                        WHITE,
+                    )
                 )
             lines.append(("blink = click, 2 blinks = double, right wink = right click", 0.4, GRAY))
             lines.append(("left wink = scroll mode (look up/down), c = recalibrate", 0.4, GRAY))

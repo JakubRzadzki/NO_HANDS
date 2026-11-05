@@ -1,4 +1,4 @@
-"""Head pose from MediaPipe's facial transformation matrix."""
+"""Head pose from MediaPipe's facial transformation matrix, and the gaze features."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import math
 import numpy as np
 import pytest
 
-from src.face_tracker import head_from_matrix
+from src.face_tracker import gaze_features, head_from_matrix, measure_eyes
+from tests.facegen import make_face
 
 
 def transform(
@@ -50,3 +51,15 @@ def test_without_mirroring_the_sides_are_swapped_into_the_users_view() -> None:
     )
     assert (yaw, pitch, roll) == pytest.approx((-20.0, 10.0, -5.0), abs=0.5)
     assert (x, y) == pytest.approx((-5.0, -3.0))
+
+
+def test_gaze_features_are_in_the_users_view_and_screen_oriented() -> None:
+    obs = make_face(gaze=(0.1, 0.05), yaw=4.0, pitch=-3.0, head_position=(2.0, 6.0, 55.0))
+    left, right = measure_eyes(obs, mirrored=True)
+    ix, iy, yaw, pitch, hx, hy = gaze_features(obs, left, right, mirrored=True)
+    assert (ix, iy) == pytest.approx((0.1, 0.05), abs=1e-6)  # looking right and down
+    assert (yaw, pitch, hx) == pytest.approx((4.0, -3.0, 2.0))
+    assert hy == pytest.approx(-6.0)  # 6 cm up = -6 in screen orientation (y down)
+    # The same image without mirroring: the iris offset to the image's right is the user's left.
+    left, right = measure_eyes(obs, mirrored=False)
+    assert gaze_features(obs, left, right, mirrored=False)[0] == pytest.approx(-0.1, abs=1e-6)

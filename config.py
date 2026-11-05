@@ -150,9 +150,9 @@ class FaceConfig:
 class EyeConfig:
     """--eyes: hands-free mouse. The cursor follows the gaze (or the nose), eye gestures click.
 
-    Webcam gaze is coarse: the eye is ~50 px wide in a 720p frame, so one pixel of iris noise
-    is ~100 screen px. Fixation filtering keeps the cursor still while you look at something;
-    the nose pointer is the precise alternative."""
+    A laptop webcam sees each eye as ~50-75 px, so one pixel of iris noise is ~100 screen px:
+    expect the cursor to land within 1-3 cm of where you look. It jumps when your eyes jump,
+    then stays put; a small head turn moves it the last bit (head_nudge). See src/gaze.py."""
 
     pointer: str = "gaze"  # "gaze": calibrated eye gaze; "nose": the cursor follows the nose
     recalibrate: bool = False  # force a new gaze calibration at start
@@ -162,19 +162,25 @@ class EyeConfig:
     double_click_window: float = 1.2  # s: a second deliberate blink within this = double click
     wink_min: float = 0.30  # s: one eye closed while the other stays open
     swap_winks: bool = False  # default: right wink = right click, left wink = scroll mode
-    # Gaze cursor: fixation filter
-    fixation_radius: float = 0.07  # fraction of screen width; a farther jump starts a new fixation
-    saccade_frames: int = 2  # frames outside the radius in a row before the cursor jumps
-    fixation_smoothing: float = 0.12  # per-frame pull towards the gaze inside a fixation
+    # Gaze cursor: fixation filter (see FixationFilter)
+    fixation_radius: float = 0.0  # fraction of screen width; 0 = 3x the jitter of calibration
+    saccade_frames: int = 2  # frames outside the radius (agreeing, after a fast step) = a jump
+    fixation_settle: float = 0.6  # s: the landing point is averaged this long, then frozen
+    fixation_dwell: float = 0.6  # s: looking this long outside the radius also moves the cursor
+    # Gaze cursor: head nudge ("MAGIC pointing"): after the eyes put the cursor near the target,
+    # turning the head moves it the rest of the way. Reset by every gaze jump.
+    head_nudge: float = 0.02  # fraction of screen width per degree of head turn (0 = off)
+    head_nudge_max: float = 0.15  # fraction of screen width
     # Nose pointer: how far (fraction of frame width) the nose travels to cross the screen
     nose_roi_width: float = 0.12
     # Scroll mode: look above / below the screen centre
     scroll_deadzone: float = 0.15  # fraction of screen height around the centre
     scroll_gain: float = 40.0  # ticks/s per screen height beyond the dead zone
     scroll_max_rate: float = 15.0  # ticks/s
-    # Gaze calibration: 3x3 dots
+    # Gaze calibration: 9 dots, the head moving while looking at one dot, 4 check dots
     calib_settle: float = 0.7  # s for the eyes to land on a dot before sampling
     calib_sample: float = 1.0  # s of samples per dot
+    calib_head: float = 6.0  # s of head movement (0 = skip: no head compensation)
 
 
 @dataclass
@@ -287,13 +293,17 @@ class AppConfig:
                 "need 0 < blink_min < blink_max < pause_hold",
             ),
             (e.wink_min > 0 and e.double_click_window > 0, "eye wink/double-click times > 0"),
-            (0 < e.fixation_radius < 1, "eyes.fixation_radius must be in (0, 1)"),
+            (0 <= e.fixation_radius < 1, "eyes.fixation_radius must be in [0, 1)"),
             (e.saccade_frames >= 1, "eyes.saccade_frames must be >= 1"),
-            (0 < e.fixation_smoothing <= 1, "eyes.fixation_smoothing must be in (0, 1]"),
+            (e.fixation_settle >= 0 and e.fixation_dwell >= 0, "eyes fixation times must be >= 0"),
+            (e.head_nudge >= 0 and e.head_nudge_max >= 0, "eyes.head_nudge values must be >= 0"),
             (0 < e.nose_roi_width <= 1, "eyes.nose_roi_width must be in (0, 1]"),
             (0 <= e.scroll_deadzone < 0.5, "eyes.scroll_deadzone must be in [0, 0.5)"),
             (e.scroll_gain > 0 and e.scroll_max_rate > 0, "eye scroll gain/rate must be > 0"),
-            (e.calib_settle >= 0 and e.calib_sample > 0, "invalid gaze calibration timing"),
+            (
+                e.calib_settle >= 0 and e.calib_sample > 0 and e.calib_head >= 0,
+                "invalid gaze calibration timing",
+            ),
             (0 < h.yaw_release < h.yaw_threshold, "need 0 < head yaw_release < yaw_threshold"),
             (
                 0 < h.pitch_release < h.pitch_threshold,

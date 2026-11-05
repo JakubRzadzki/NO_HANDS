@@ -24,11 +24,11 @@ from typing import Any
 import cv2
 
 from config import AppConfig, HotkeyConfig
-from src.calibration_ui import run_calibration
+from src.calibration_ui import describe, quality_warnings, run_calibration
 from src.camera import ThreadedCamera, probe_camera
 from src.eye_engine import EyeEngine, FaceMode, FaceOutput
 from src.face_tracker import FaceTracker
-from src.gaze import GazeCalibration
+from src.gaze import GazeModel
 from src.gesture_engine import EngineOutput, GestureEngine, Mode
 from src.hand_tracker import HandTracker
 from src.head_engine import HeadArrows
@@ -329,40 +329,47 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
     return 0
 
 
-def _gaze_calibration(s: _Session, tracker: FaceTracker, force: bool) -> GazeCalibration | None:
+def _gaze_model(s: _Session, tracker: FaceTracker, force: bool) -> GazeModel | None:
     e = s.cfg.eyes
     if not force:
-        saved = GazeCalibration.load(e.calibration_path, s.screen)
+        saved = GazeModel.load(e.calibration_path, s.screen)
         if saved is not None:
             log.info(
-                "Saved gaze calibration loaded (error ~%.0f px); --recalibrate or 'c' redoes it.",
-                saved.rms_error,
+                "Saved gaze calibration loaded (%s); --recalibrate or 'c' redoes it.",
+                describe(saved),
             )
+            for warning in quality_warnings(saved):
+                log.warning("%s", warning)
             return saved
-    log.info("Gaze calibration: look at each dot until it moves on (about 15 s).")
-    calibration = run_calibration(s.camera, tracker, e, s.screen, s.cfg.camera.mirror)
-    if calibration is None:
+    log.info(
+        "Gaze calibration (~30 s): follow the dots with your eyes; in the middle, keep looking "
+        "at the dot and turn your head where the arrow points."
+    )
+    model = run_calibration(s.camera, tracker, e, s.screen, s.cfg.camera.mirror)
+    if model is None:
         log.error("No gaze calibration. Try again, or use --eyes-pointer nose.")
         return None
-    calibration.save(e.calibration_path)
-    return calibration
+    model.save(e.calibration_path)
+    return model
 
 
 def _face_loop(s: _Session, tracker: FaceTracker) -> int:
     cfg, camera, controller = s.cfg, s.camera, s.controller
     mirrored = cfg.camera.mirror
-    calibration: GazeCalibration | None = None
+    model: GazeModel | None = None
     engine: EyeEngine | HeadArrows
     if cfg.input_mode == "eyes":
         if cfg.eyes.pointer == "gaze":
-            calibration = _gaze_calibration(s, tracker, force=cfg.eyes.recalibrate)
-            if calibration is None:
+            model = _gaze_model(s, tracker, force=cfg.eyes.recalibrate)
+            if model is None:
                 return 1
-        engine = EyeEngine(cfg.eyes, cfg.face, s.screen, cfg.filter, calibration, mirrored)
+        engine = EyeEngine(cfg.eyes, cfg.face, s.screen, cfg.filter, model, mirrored)
+        if model is not None:
+            log.info("Gaze cursor: jumps when the eyes move > %.0f px.", engine.fixation_radius)
     else:
         engine = HeadArrows(cfg.head, cfg.face, mirrored)
-    error = calibration.rms_error if calibration is not None else None
-    hud = FaceHud(cfg.input_mode, cfg.face, cfg.head, error) if cfg.hud.enabled else None
+    quality = describe(model) if model is not None else None
+    hud = FaceHud(cfg.input_mode, cfg.face, cfg.head, quality) if cfg.hud.enabled else None
     window = _WindowWatch(cfg.hud.window_name)
     if hud is not None:
         cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
@@ -410,10 +417,10 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
             if key == ord("p"):
                 s.pause_toggle.set()
             if key == ord("c") and isinstance(engine, EyeEngine) and cfg.eyes.pointer == "gaze":
-                new = _gaze_calibration(s, tracker, force=True)
+                new = _gaze_model(s, tracker, force=True)
                 if new is not None:
-                    engine.set_calibration(new)
-                    hud.calibration_error = new.rms_error
+                    engine.set_model(new)
+                    hud.calibration = describe(new)
             if window.closed():
                 break
     return 0

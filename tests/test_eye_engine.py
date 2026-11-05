@@ -1,4 +1,4 @@
-"""--eyes on synthetic faces: gaze / nose pointer, blinks, winks, scroll mode, pause."""
+"""--eyes on synthetic faces: gaze / nose pointer, head nudge, blinks, winks, scroll, pause."""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ def of(actions: list[Action], kind: type) -> list[Any]:
     return [a for a in actions if isinstance(a, kind)]
 
 
-def driver(pointer: str = "gaze", **overrides: Any) -> FaceDriver:
+def driver(pointer: str = "gaze", noise: float = 0.0, **overrides: Any) -> FaceDriver:
     cfg = EyeConfig(pointer=pointer)
     for name, value in overrides.items():
         setattr(cfg, name, value)
-    calibration = linear_calibration() if pointer == "gaze" else None
-    d = FaceDriver(EyeEngine(cfg, FaceConfig(), SCREEN, FilterConfig(), calibration))
+    model = linear_calibration(noise=noise) if pointer == "gaze" else None
+    d = FaceDriver(EyeEngine(cfg, FaceConfig(), SCREEN, FilterConfig(), model))
     d.hold(1.0, gaze=gaze_for(960, 540))  # learn the open-eye baseline, settle the cursor
     return d
 
@@ -39,7 +39,7 @@ def test_looking_at_a_point_moves_the_cursor_there() -> None:
 
 
 def test_gaze_noise_does_not_jitter_the_cursor() -> None:
-    d = driver()
+    d = driver(noise=50.0)  # calibration measured 50 px of jitter: the radius adapts to it
     rng = np.random.default_rng(3)
     pointers = []
     for _ in range(90):
@@ -49,9 +49,59 @@ def test_gaze_noise_does_not_jitter_the_cursor() -> None:
     assert np.std(np.array(pointers), axis=0).max() < 15  # raw gaze noise is 50 px
 
 
+def test_fixation_radius_comes_from_the_calibration_jitter() -> None:
+    def radius(noise: float, **cfg: Any) -> float:
+        model = linear_calibration(noise=noise)
+        engine = EyeEngine(EyeConfig(**cfg), FaceConfig(), SCREEN, FilterConfig(), model)
+        return engine.fixation_radius
+
+    assert radius(80.0) == pytest.approx(240.0)  # 3 sigma
+    assert radius(0.0) == pytest.approx(0.03 * SCREEN[0])  # never below 3% of the screen
+    assert radius(500.0) == pytest.approx(0.20 * SCREEN[0])  # ... or above 20%
+    assert radius(80.0, fixation_radius=0.1) == pytest.approx(192.0)  # fixed in the config
+
+
 def test_gaze_pointer_needs_a_calibration() -> None:
     with pytest.raises(ValueError):
         EyeEngine(EyeConfig(), FaceConfig(), SCREEN, FilterConfig(), None)
+
+
+# -- head nudge -----------------------------------------------------------------------------------
+def test_a_small_head_turn_nudges_the_cursor_and_a_gaze_jump_resets_it() -> None:
+    d = driver()
+    d.hold(1.0, gaze=gaze_for(1200, 500))
+    out = d.step(gaze=gaze_for(1200, 500))
+    assert out.pointer == pytest.approx((1200, 500), abs=10)
+    d.hold(1.5, gaze=gaze_for(1200, 500), yaw=3.0, pitch=-2.0)  # eyes stay, head turns
+    out = d.step(gaze=gaze_for(1200, 500), yaw=3.0, pitch=-2.0)
+    per_degree = 0.02 * SCREEN[0]  # head_nudge
+    assert out.pointer == pytest.approx((1200 + 3 * per_degree, 500 - 2 * per_degree), abs=12)
+    assert out.nudge == pytest.approx((3 * per_degree, -2 * per_degree), abs=12)
+    # The eyes jump elsewhere: the cursor lands where they look, whatever the head did before.
+    d.hold(1.0, gaze=gaze_for(400, 300), yaw=3.0, pitch=-2.0)
+    out = d.step(gaze=gaze_for(400, 300), yaw=3.0, pitch=-2.0)
+    assert out.pointer == pytest.approx((400, 300), abs=10)
+
+
+def test_the_nudge_waits_for_the_head_to_finish_its_part_of_a_gaze_shift() -> None:
+    d = driver()
+    pointers = []
+    for i in range(12):  # the eyes jump, the head follows them for another 0.4 s
+        out = d.step(gaze=gaze_for(1500, 540), yaw=min(i, 8) * 1.0)
+        if out.pointer is not None:
+            pointers.append(out.pointer[0])
+    assert max(pointers[2:]) < 1500 + 20  # no overshoot from the late head movement
+
+
+def test_nudge_can_be_switched_off_and_is_limited() -> None:
+    d = driver(head_nudge=0.0)
+    d.hold(1.0, gaze=gaze_for(960, 540), yaw=10.0)
+    assert d.step(gaze=gaze_for(960, 540), yaw=10.0).pointer == pytest.approx((960, 540), abs=10)
+    d = driver(head_nudge_max=0.05)
+    d.hold(1.0, gaze=gaze_for(960, 540))
+    d.hold(1.5, gaze=gaze_for(960, 540), yaw=20.0)
+    out = d.step(gaze=gaze_for(960, 540), yaw=20.0)
+    assert out.pointer is not None and out.pointer[0] == pytest.approx(960 + 96, abs=5)
 
 
 # -- blinks ---------------------------------------------------------------------------------------
