@@ -104,7 +104,7 @@ def ensure_model(path: str | os.PathLike[str], url: str) -> Path:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part")
-    log.info("Downloading the hand landmark model (~8 MB) to %s ...", target)
+    log.info("Downloading the model %s ...", target)
     try:
         with urllib.request.urlopen(url, timeout=30) as response, open(partial, "wb") as fh:
             shutil.copyfileobj(response, fh)
@@ -116,7 +116,7 @@ def ensure_model(path: str | os.PathLike[str], url: str) -> Path:
     except Exception as exc:
         partial.unlink(missing_ok=True)
         raise RuntimeError(
-            f"Could not download the hand model from {url} ({exc}). "
+            f"Could not download the model from {url} ({exc}). "
             f"Download it manually and save it as {target}."
         ) from exc
     return target
