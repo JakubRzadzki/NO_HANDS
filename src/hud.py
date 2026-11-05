@@ -8,7 +8,9 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from config import GestureConfig
+from config import FaceConfig, GestureConfig, HeadConfig
+from src.eye_engine import FaceMode, FaceOutput
+from src.face_tracker import EYE_OUTLINES, IRIS_CENTERS, NOSE_TIP, FaceObservation
 from src.gesture_engine import PINCH_FINGERS, EngineOutput, Finger, LeftState, Mode
 from src.hand_tracker import (
     HAND_CONNECTIONS,
@@ -204,17 +206,108 @@ class Hud:
             )
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
+        draw_text_panel(frame, lines)
 
-        pad, gap = 8, 6
-        sizes = [cv2.getTextSize(text, FONT, scale, 1)[0] for text, scale, _ in lines]
-        panel_w = min(max(sw for sw, _ in sizes) + 2 * pad, frame.shape[1])
-        panel_h = min(sum(sh + gap for _, sh in sizes) + 2 * pad, frame.shape[0])
-        region = frame[:panel_h, :panel_w]
-        region[:] = cv2.convertScaleAbs(region, alpha=0.35, beta=0)  # darken for legibility
 
-        y = pad
-        for (text, scale, color), (_, text_h) in zip(lines, sizes, strict=True):
-            y += text_h
-            thickness = 2 if scale >= 0.8 else 1
-            cv2.putText(frame, text, (pad, y), FONT, scale, color, thickness, cv2.LINE_AA)
-            y += gap
+def draw_text_panel(frame: npt.NDArray[np.uint8], lines: list[tuple[str, float, Color]]) -> None:
+    """Text lines (text, scale, colour) on a darkened box in the top-left corner.
+
+    Frames wider than 1280 px are shrunk for display, so the text is drawn proportionally
+    larger to stay readable after that."""
+    k = max(frame.shape[1] / 1280.0, 1.0)
+    pad, gap = round(8 * k), round(6 * k)
+    styles = [(scale * k, max(1, round((2 if scale >= 0.8 else 1) * k))) for _, scale, _ in lines]
+    sizes = [
+        cv2.getTextSize(text, FONT, scale, thickness)[0]
+        for (text, _, _), (scale, thickness) in zip(lines, styles, strict=True)
+    ]
+    panel_w = min(max(sw for sw, _ in sizes) + 2 * pad, frame.shape[1])
+    panel_h = min(sum(sh + gap for _, sh in sizes) + 2 * pad, frame.shape[0])
+    region = frame[:panel_h, :panel_w]
+    region[:] = cv2.convertScaleAbs(region, alpha=0.35, beta=0)  # darken for legibility
+    y = pad
+    for (text, _, color), (scale, thickness), (_, text_h) in zip(lines, styles, sizes, strict=True):
+        y += text_h
+        cv2.putText(frame, text, (pad, y), FONT, scale, color, thickness, cv2.LINE_AA)
+        y += gap
+
+
+FACE_COLORS: dict[FaceMode, Color] = {
+    FaceMode.EYES: CYAN,
+    FaceMode.HEAD: CYAN,
+    FaceMode.EYE_SCROLL: YELLOW,
+    FaceMode.PAUSED: RED,
+    FaceMode.NO_FACE: GRAY,
+}
+FACE_EVENTS = {"LEFT CLICK", "DOUBLE CLICK", "RIGHT CLICK", "LEFT", "RIGHT", "UP", "DOWN"}
+
+
+class FaceHud:
+    """Preview for --eyes / --head: eye outlines, irises, nose, eye openness and the mode."""
+
+    def __init__(
+        self, mode: str, face: FaceConfig, head: HeadConfig, calibration_error: float | None
+    ) -> None:
+        self.mode = mode
+        self.face = face
+        self.head = head
+        self.calibration_error = calibration_error
+
+    def draw(
+        self,
+        frame: npt.NDArray[np.uint8],
+        obs: FaceObservation | None,
+        out: FaceOutput,
+        stats: LoopStats,
+        paused: bool,
+    ) -> None:
+        color = RED if paused else GREEN if out.label in FACE_EVENTS else FACE_COLORS[out.mode]
+        if obs is not None:
+            pts = np.rint(obs.px).astype(int)
+            for outline in EYE_OUTLINES:
+                for index in (*outline["corners"], *outline["upper"], *outline["lower"]):
+                    cv2.circle(frame, _pt(pts[index]), 2, WHITE, -1, cv2.LINE_AA)
+            for index in IRIS_CENTERS:
+                cv2.circle(frame, _pt(pts[index]), 3, color, -1, cv2.LINE_AA)
+            cv2.circle(frame, _pt(pts[NOSE_TIP]), 4, ORANGE, -1, cv2.LINE_AA)
+
+        lines: list[tuple[str, float, Color]] = [
+            ("PAUSED (global)" if paused else out.label, 0.8, color),
+            (
+                f"FPS {stats.fps:3.0f}  cam {stats.camera_fps:3.0f}  "
+                f"latency {stats.latency_ms:3.0f} ms  model {stats.inference_ms:3.0f} ms",
+                0.45,
+                WHITE,
+            ),
+        ]
+        if out.eyes is not None:
+            (ol, orr), (cl, cr) = out.openness, out.closed
+            lines.append(
+                (
+                    f"eye openness L {ol:.2f}{' closed' if cl else ''}  R {orr:.2f}"
+                    f"{' closed' if cr else ''}   (closed < {self.face.closed_below:.2f})",
+                    0.45,
+                    WHITE,
+                )
+            )
+        if self.mode == "head":
+            if out.feature is not None:
+                yaw, pitch = out.feature
+                lines.append(
+                    (
+                        f"head yaw {yaw:+.2f} (arrow at +-{self.head.yaw_threshold:.2f})  "
+                        f"pitch {pitch:+.2f} (+-{self.head.pitch_threshold:.2f})",
+                        0.45,
+                        WHITE,
+                    )
+                )
+            lines.append(("turn / nod = arrows, hold = repeat", 0.4, GRAY))
+        else:
+            if self.calibration_error is not None:
+                lines.append(
+                    (f"gaze calibration error ~{self.calibration_error:.0f} px", 0.45, WHITE)
+                )
+            lines.append(("blink = click, 2 blinks = double, right wink = right click", 0.4, GRAY))
+            lines.append(("left wink = scroll mode (look up/down), c = recalibrate", 0.4, GRAY))
+        lines.append(("eyes closed 1.5 s = pause/resume   q/ESC quit", 0.4, GRAY))
+        draw_text_panel(frame, lines)
