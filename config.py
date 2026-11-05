@@ -46,6 +46,11 @@ class TrackerConfig:
     min_presence_confidence: float = 0.5
     # Higher values make MediaPipe re-run the (slower, jumpier) palm detector more often.
     min_tracking_confidence: float = 0.5
+    # Far (small) hands: the palm detector sees the whole frame shrunk to 192 px, where a hand
+    # far from the camera is only a few pixels. When nothing is found, the frame's centre crop
+    # of this size is searched as well: the detector sees it 1/zoom_crop times larger. Costs
+    # time only while no hand is found by the normal search. 0 = off.
+    zoom_crop: float = 0.6
 
 
 @dataclass
@@ -267,6 +272,7 @@ class AppConfig:
             (f.min_cutoff > 0 and f.d_cutoff > 0, "filter cutoffs must be > 0"),
             (f.beta >= 0, "filter beta must be >= 0"),
             (c.width > 0 and c.height > 0 and c.fps > 0, "camera width/height/fps must be > 0"),
+            (0 <= self.tracker.zoom_crop < 1, "tracker.zoom_crop must be in [0, 1)"),
             (self.output.zoom_modifier in ("ctrl", "cmd"), "zoom_modifier must be ctrl or cmd"),
             (m.toggle_hold > 0, "media.toggle_hold must be > 0"),
             (

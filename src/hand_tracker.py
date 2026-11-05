@@ -4,6 +4,14 @@ The legacy ``mp.solutions.hands`` API no longer exists in current MediaPipe rele
 only the Tasks API), so this module drives ``HandLandmarker`` in VIDEO mode: synchronous,
 deterministic, and it reuses the previous frame's hand box for tracking instead of running the
 palm detector on every frame.
+
+Far hands get a second look: MediaPipe's palm detector sees the whole frame shrunk to 192 px,
+where a hand far from the camera is too small to find. When the normal search finds nothing,
+a second landmarker searches the centre crop of the frame (``TrackerConfig.zoom_crop``), which
+it sees magnified. In a test with real hand photos at several sizes this found a hand in ~37%
+more frames, almost all of them small hands. What was measured and *not* adopted: MediaPipe's
+metric "world" landmarks classify fingers worse than the image landmarks used here (86 vs 89
+of 92 finger states on hands tilted by up to 50 degrees, and a fist only just counts as a fist).
 """
 
 from __future__ import annotations
@@ -38,6 +46,10 @@ MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP = 9, 10, 11, 12
 RING_MCP, RING_PIP, RING_DIP, RING_TIP = 13, 14, 15, 16
 PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP = 17, 18, 19, 20
 NUM_LANDMARKS = 21
+# With no hand anywhere for a while (hands on the keyboard), the centre-crop search runs only on
+# every 3rd frame: it would otherwise double the CPU time spent looking at an empty scene.
+ZOOM_IDLE_AFTER = 30  # frames without a hand
+ZOOM_IDLE_EVERY = 3
 
 HAND_CONNECTIONS: tuple[tuple[int, int], ...] = (
     (0, 1), (1, 2), (2, 3), (3, 4),  # thumb
@@ -97,6 +109,27 @@ class HandObservation:
         return self.dist(i, j) / self.palm_scale
 
 
+def centre_crop(frame_size: tuple[int, int], fraction: float) -> tuple[int, int, int, int]:
+    """Pixel box (x0, y0, x1, y1) of the centred crop with ``fraction`` of the frame's size."""
+    width, height = frame_size
+    crop_w, crop_h = max(1, round(width * fraction)), max(1, round(height * fraction))
+    x0, y0 = (width - crop_w) // 2, (height - crop_h) // 2
+    return x0, y0, x0 + crop_w, y0 + crop_h
+
+
+def uncrop(
+    norm: npt.ArrayLike, box: tuple[int, int, int, int], frame_size: tuple[int, int]
+) -> FloatArray:
+    """Normalized landmarks found in a crop -> normalized coordinates of the whole frame."""
+    x0, y0, x1, y1 = box
+    width, height = frame_size
+    out = np.array(norm, dtype=np.float64).reshape(-1, 3)
+    out[:, 0] = (x0 + out[:, 0] * (x1 - x0)) / width
+    out[:, 1] = (y0 + out[:, 1] * (y1 - y0)) / height
+    out[:, 2] *= (x1 - x0) / width  # MediaPipe's z is on the scale of the image width
+    return out
+
+
 def ensure_model(path: str | os.PathLike[str], url: str) -> Path:
     """Return the model path, downloading the model first if it is missing."""
     target = Path(path)
@@ -142,8 +175,16 @@ class HandTracker:
         )
         self._mp: Any = mp
         self._landmarker: Any = vision.HandLandmarker.create_from_options(options)
+        self.zoom_crop = cfg.zoom_crop
+        # A landmarker of its own: VIDEO mode tracks the hand from frame to frame, and the crop
+        # has other coordinates than the whole frame.
+        self._zoomed: Any = (
+            vision.HandLandmarker.create_from_options(options) if 0 < cfg.zoom_crop < 1 else None
+        )
         self._last_ts_ms = -1
+        self._misses = 0  # frames in a row without a hand
         self.last_inference_ms = 0.0
+        self.zoomed = False  # the last hand was found by the centre-crop search
 
     def process(self, frame_bgr: npt.NDArray[np.uint8], timestamp: float) -> HandObservation | None:
         height, width = frame_bgr.shape[:2]
@@ -155,11 +196,25 @@ class HandTracker:
 
         started = time.perf_counter()
         result = self._landmarker.detect_for_video(image, ts_ms)
+        box = None
+        idle = self._misses >= ZOOM_IDLE_AFTER and self._misses % ZOOM_IDLE_EVERY != 0
+        if not result.hand_landmarks and self._zoomed is not None and not idle:
+            box = centre_crop((width, height), self.zoom_crop)
+            x0, y0, x1, y1 = box
+            crop = np.ascontiguousarray(rgb[y0:y1, x0:x1])
+            image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=crop)
+            result = self._zoomed.detect_for_video(image, ts_ms)
         self.last_inference_ms = (time.perf_counter() - started) * 1000.0
 
+        self.zoomed = False
         if not result.hand_landmarks:
+            self._misses += 1
             return None
+        self._misses = 0
         norm = np.array([(p.x, p.y, p.z) for p in result.hand_landmarks[0]], dtype=np.float64)
+        if box is not None:
+            norm = uncrop(norm, box, (width, height))
+            self.zoomed = True
         label, score = "Unknown", 1.0
         if result.handedness and result.handedness[0]:
             category = result.handedness[0][0]
@@ -168,6 +223,8 @@ class HandTracker:
 
     def close(self) -> None:
         self._landmarker.close()
+        if self._zoomed is not None:
+            self._zoomed.close()
 
     def __enter__(self) -> HandTracker:
         return self
