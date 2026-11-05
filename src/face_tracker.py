@@ -3,10 +3,17 @@
 Which eye is "left" is decided by position in the image, never by landmark or blendshape names:
 in the mirrored (selfie) frame the user's left eye is the one on the image's left, exactly like
 in a mirror. That keeps winks correct whether or not the frame is mirrored.
+
+The head pose comes from MediaPipe's facial transformation matrix: a metric 3D fit of a canonical
+face to all 478 landmarks, giving real angles in degrees and the head position in cm. It is far
+steadier than any single landmark. (An earlier 2D shortcut, the nose offset from the eyes, gave
+the wrong sign on real photos as soon as the head was tilted, which is why head control
+misbehaved.)
 """
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from types import TracebackType
@@ -35,15 +42,23 @@ class FaceObservation:
     norm: FloatArray  # (478, 3) normalized MediaPipe coordinates
     px: FloatArray  # (478, 2) pixel coordinates
     frame_size: tuple[int, int]
+    # From the user's point of view: yaw > 0 = turned right, pitch > 0 = head down (degrees).
+    head: tuple[float, float, float] = (0.0, 0.0, 0.0)  # yaw, pitch, roll
+    head_position: tuple[float, float, float] = (0.0, 0.0, 60.0)  # cm: right, up, distance
 
     @classmethod
     def from_normalized(
-        cls, norm: npt.ArrayLike, frame_size: tuple[int, int], timestamp: float
+        cls,
+        norm: npt.ArrayLike,
+        frame_size: tuple[int, int],
+        timestamp: float,
+        head: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        head_position: tuple[float, float, float] = (0.0, 0.0, 60.0),
     ) -> FaceObservation:
         norm_arr = np.asarray(norm, dtype=np.float64).reshape(-1, 3)
         width, height = frame_size
         px = norm_arr[:, :2] * np.array([width, height], dtype=np.float64)
-        return cls(timestamp, norm_arr, px, frame_size)
+        return cls(timestamp, norm_arr, px, frame_size, head, head_position)
 
 
 @dataclass(frozen=True)
@@ -51,9 +66,26 @@ class EyeMeasure:
     center: tuple[float, float]  # px
     width: float  # px, corner to corner
     aspect: float  # lid opening / width: ~0.3 open, < 0.1 closed
-    iris: tuple[
-        float, float
-    ]  # iris centre offset from the eye centre, in eye widths (+x right, +y down)
+    iris: tuple[float, float]  # iris offset from the eye centre in eye widths (+x right, +y down)
+
+
+def head_from_matrix(
+    matrix: npt.ArrayLike, mirrored: bool
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """(yaw, pitch, roll) in degrees and (x, y, distance) in cm from the 4x4 face transform.
+
+    The transform maps the canonical face into the camera frame (x right, y up, z towards the
+    camera); its third column is where the face points. In a mirrored frame the image's right
+    is the user's right, so the frame's angles already read from the user's point of view."""
+    m = np.asarray(matrix, dtype=np.float64).reshape(4, 4)
+    rotation, forward = m[:3, :3], m[:3, 2]
+    yaw = math.degrees(math.atan2(forward[0], forward[2]))
+    pitch = math.degrees(math.asin(min(max(-forward[1], -1.0), 1.0)))  # + = facing down
+    roll = math.degrees(math.atan2(rotation[1, 0], rotation[1, 1]))
+    x, y, z = (float(v) for v in m[:3, 3])
+    if not mirrored:
+        yaw, roll, x = -yaw, -roll, -x
+    return (yaw, pitch, roll), (x, y, -z)
 
 
 def _unit_axes(a: FloatArray, b: FloatArray) -> tuple[FloatArray, FloatArray, float]:
@@ -92,30 +124,11 @@ def gaze_feature(left: EyeMeasure, right: EyeMeasure) -> tuple[float, float]:
     return (left.iris[0] + right.iris[0]) / 2.0, (left.iris[1] + right.iris[1]) / 2.0
 
 
-def head_pose(
-    obs: FaceObservation, eyes: tuple[EyeMeasure, EyeMeasure], mirrored: bool = True
-) -> tuple[float, float]:
-    """Head (yaw, pitch) as the nose tip's offset from the eyes' midpoint, in eye distances.
-
-    Measured in the face's own frame (along and across the line through the eyes), so tilting
-    the head sideways does not leak into yaw or pitch, and dividing by the eye distance makes
-    it independent of how far the user sits. yaw > 0: turned to the user's right;
-    pitch > 0: nose lower than usual (head down).
-    """
-    p, q = np.array(eyes[0].center), np.array(eyes[1].center)
-    a, b = (p, q) if p[0] <= q[0] else (q, p)
-    u, v, distance = _unit_axes(a, b)
-    rel = obs.px[NOSE_TIP] - (a + b) / 2.0
-    yaw = float(rel @ u) / distance  # + = towards the image's right
-    pitch = float(rel @ v) / distance
-    return (yaw if mirrored else -yaw), pitch
-
-
 class FaceTracker:
     """BGR frame in, ``FaceObservation`` (or None) out. Blendshapes are not computed: eye
     openness comes from the landmarks, which is cheaper and does not depend on naming."""
 
-    def __init__(self, cfg: FaceConfig) -> None:
+    def __init__(self, cfg: FaceConfig, mirrored: bool = True) -> None:
         import mediapipe as mp
         from mediapipe.tasks.python import vision
         from mediapipe.tasks.python.core.base_options import BaseOptions
@@ -125,7 +138,9 @@ class FaceTracker:
             base_options=BaseOptions(model_asset_path=str(model_path)),
             running_mode=vision.RunningMode.VIDEO,
             num_faces=1,
+            output_facial_transformation_matrixes=True,
         )
+        self.mirrored = mirrored
         self._mp: Any = mp
         self._landmarker: Any = vision.FaceLandmarker.create_from_options(options)
         self._last_ts_ms = -1
@@ -143,7 +158,12 @@ class FaceTracker:
         if not result.face_landmarks:
             return None
         norm = np.array([(p.x, p.y, p.z) for p in result.face_landmarks[0]], dtype=np.float64)
-        return FaceObservation.from_normalized(norm, (width, height), timestamp)
+        head, position = (0.0, 0.0, 0.0), (0.0, 0.0, 60.0)
+        if result.facial_transformation_matrixes:
+            head, position = head_from_matrix(
+                result.facial_transformation_matrixes[0], self.mirrored
+            )
+        return FaceObservation.from_normalized(norm, (width, height), timestamp, head, position)
 
     def close(self) -> None:
         self._landmarker.close()

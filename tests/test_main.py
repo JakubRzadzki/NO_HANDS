@@ -152,7 +152,7 @@ class ScriptedFace:
 
     script: ClassVar[list[tuple[int, dict[str, Any]]]] = []
 
-    def __init__(self, cfg: FaceConfig) -> None:
+    def __init__(self, cfg: FaceConfig, mirrored: bool = True) -> None:
         self.last_inference_ms = 4.0
         self.frames = 0
 
@@ -186,7 +186,7 @@ def run_face_mode(
 
 
 def test_head_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch) -> None:
-    run_face_mode(monkeypatch, "head", [(30, {}), (10, {"yaw": 0.2})])  # 60 FPS fake camera
+    run_face_mode(monkeypatch, "head", [(30, {}), (10, {"yaw": 22.0})])  # 60 FPS fake camera
     assert ("tap", "right") in backend.calls
 
 

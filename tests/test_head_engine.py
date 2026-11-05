@@ -1,4 +1,4 @@
-"""--head on synthetic faces: head turns and nods press arrow keys."""
+"""--head on synthetic faces: quick head turns and nods press arrow keys."""
 
 from __future__ import annotations
 
@@ -27,55 +27,84 @@ def driver(mirrored: bool = True, **overrides: Any) -> FaceDriver:
     return d
 
 
-def test_turns_and_nods_press_the_matching_arrow_once() -> None:
-    d = driver(repeat_delay=0.0)
+def turn(d: FaceDriver, seconds: float, **goal: float) -> list[Action]:
+    """Move the head from neutral to ``goal`` (degrees) over ``seconds``, linearly."""
+    frames = max(1, round(seconds / d.dt))
+    actions: list[Action] = []
+    for i in range(1, frames + 1):
+        pose: dict[str, Any] = {axis: value * i / frames for axis, value in goal.items()}
+        actions += d.step(**pose).actions
+    return actions
+
+
+def test_quick_turns_and_nods_press_the_matching_arrow_once() -> None:
+    d = driver()
     pressed: list[str] = []
-    moves: list[dict[str, Any]] = [{"yaw": 0.2}, {"yaw": -0.2}, {"pitch": 0.15}, {"pitch": -0.15}]
+    moves: list[dict[str, Any]] = [{"yaw": 22}, {"yaw": -22}, {"pitch": 18}, {"pitch": -18}]
     for move in moves:
-        pressed += keys(d.hold(0.3, **move) + d.hold(0.3))  # move, then back to neutral
-    # Coming back to the centre never fires the opposite arrow.
+        pressed += keys(turn(d, 0.25, **move) + d.hold(0.5, **move) + d.hold(0.4))
+    # Coming back to the centre never fires the opposite arrow, holding does not repeat.
     assert pressed == ["right", "left", "down", "up"]
 
 
-def test_holding_the_head_there_repeats_the_key() -> None:
+def test_slowly_turning_to_look_elsewhere_presses_nothing() -> None:
     d = driver()
-    pressed = keys(d.hold(1.5, yaw=0.2))
+    assert keys(turn(d, 3.0, yaw=30.0) + d.hold(1.0, yaw=30.0)) == []  # 10 deg/s
+    assert keys(turn(d, 3.0, pitch=25.0) + d.hold(1.0, pitch=25.0)) == []
+    d.hold(0.5)  # back in the centre: armed again
+    assert keys(turn(d, 0.2, yaw=-22.0)) == ["left"]
+
+
+def test_holding_the_head_there_can_repeat_the_key() -> None:
+    d = driver(repeat_delay=0.6)
+    pressed = keys(turn(d, 0.2, yaw=22.0) + d.hold(1.5, yaw=22.0))
     # once at once, then every 0.25 s after 0.6 s
-    assert set(pressed) == {"right"} and len(pressed) in (4, 5)
+    assert set(pressed) == {"right"} and len(pressed) in (5, 6)
 
 
 def test_small_moves_and_sideways_tilt_do_nothing() -> None:
     d = driver()
-    actions = d.hold(1.0, yaw=0.05) + d.hold(1.0, pitch=0.03) + d.hold(1.0, roll_deg=20.0)
+    actions = turn(d, 0.2, yaw=10.0) + d.hold(1.0, yaw=10.0) + d.hold(0.5)
+    actions += turn(d, 0.2, pitch=-9.0) + d.hold(1.0, pitch=-9.0) + d.hold(0.5)
+    actions += d.hold(1.0, roll_deg=25.0)
     assert keys(actions) == []
 
 
 def test_distance_from_the_camera_does_not_matter() -> None:
-    for eye_distance in (60.0, 200.0):
-        d = driver(repeat_delay=0.0)
-        assert keys(d.hold(0.3, yaw=0.2, eye_distance=eye_distance)) == ["right"]
+    for distance in (40.0, 100.0):
+        d = FaceDriver(HeadArrows(HeadConfig(), FaceConfig()))
+        d.hold(0.7, head_position=(0.0, 0.0, distance))
+        assert keys(turn(d, 0.2, yaw=22.0)) == ["right"]
 
 
 def test_closing_the_eyes_pauses_head_control() -> None:
-    d = driver(repeat_delay=0.0)
+    d = driver()
     d.hold(2.0, openness=CLOSED)
     assert d.step().mode is FaceMode.PAUSED
-    assert keys(d.hold(0.5, yaw=0.2) + d.hold(0.3)) == []
+    assert keys(turn(d, 0.2, yaw=22.0) + d.hold(0.3)) == []
     d.hold(2.0, openness=CLOSED)
     d.hold(0.7)  # resumed: the neutral pose is learned again
     assert d.outputs[-1].mode is FaceMode.HEAD
-    assert keys(d.hold(0.3, yaw=-0.2)) == ["left"]
+    assert keys(turn(d, 0.2, yaw=-22.0)) == ["left"]
 
 
 def test_slow_posture_drift_is_absorbed() -> None:
-    d = driver(repeat_delay=0.0)
+    d = driver()
     pressed: list[str] = []
-    for i in range(300):  # 10 s in which the resting pose drifts by most of a threshold
-        pressed += keys(d.step(yaw=0.1 * i / 300).actions)
+    for i in range(300):  # 10 s in which the resting pose drifts by 12 degrees
+        pressed += keys(d.step(yaw=12.0 * i / 300).actions)
     assert pressed == []
-    assert keys(d.hold(0.3, yaw=0.3)) == ["right"]  # a real turn from the new resting pose
+    d.hold(0.5, yaw=12.0)
+    # A quick 17-degree turn from the new resting pose fires; from the old one it is 29.
+    actions = []
+    for i in range(1, 7):
+        actions += d.step(yaw=12.0 + 17.0 * i / 6).actions
+    assert keys(actions) == ["right"]
 
 
-def test_without_mirroring_the_raw_image_sides_are_swapped() -> None:
-    d = driver(mirrored=False, repeat_delay=0.0)
-    assert keys(d.hold(0.3, yaw=0.2)) == ["left"]
+def test_head_pose_is_already_in_the_users_view() -> None:
+    """Mirroring is handled where the pose is computed (head_from_matrix), so the engine
+    presses the same arrow for the same head turn with or without a mirrored image."""
+    for mirrored in (True, False):
+        d = driver(mirrored=mirrored)
+        assert keys(turn(d, 0.2, yaw=22.0)) == ["right"]

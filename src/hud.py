@@ -295,13 +295,13 @@ class FaceHud:
                 yaw, pitch = out.feature
                 lines.append(
                     (
-                        f"head yaw {yaw:+.2f} (arrow at +-{self.head.yaw_threshold:.2f})  "
-                        f"pitch {pitch:+.2f} (+-{self.head.pitch_threshold:.2f})",
+                        f"head yaw {yaw:+4.0f} deg (arrow at +-{self.head.yaw_threshold:.0f})  "
+                        f"pitch {pitch:+4.0f} deg (+-{self.head.pitch_threshold:.0f})",
                         0.45,
                         WHITE,
                     )
                 )
-            lines.append(("turn / nod = arrows, hold = repeat", 0.4, GRAY))
+            lines.append(("quick turn / nod = arrow key", 0.4, GRAY))
         else:
             if self.calibration_error is not None:
                 lines.append(

@@ -1,8 +1,9 @@
-"""Synthetic MediaPipe face landmarks for the eye and head tests.
+"""Synthetic MediaPipe face observations for the eye and head tests.
 
 Only the landmarks the code reads are placed (eye outlines, irises, nose tip); all other points
 sit at the face centre. Coordinates follow a mirrored (selfie) frame, so the user's left eye is
-on the image's left, as in a mirror.
+on the image's left, as in a mirror. The head pose (MediaPipe's transformation matrix in the
+real tracker) is given directly, in the user's view: yaw > 0 = turned right, pitch > 0 = down.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from src.os_controller import Action
 FRAME = (1280, 720)
 SCREEN = (1920, 1080)
 OPEN_ASPECT = 0.32  # eye aspect ratio of an open eye (real MediaPipe data: 0.29-0.40)
-NOSE_DROP = 0.7  # neutral nose tip position below the eye line, in eye distances
+NOSE_DROP = 0.7  # nose tip below the eye line, in eye distances
+NOSE_DEPTH = 0.9  # how far the nose tip swings sideways per radian of head turn, eye distances
 GAZE_RANGE = (0.4, 0.24)  # synthetic iris offset range (eye widths) across the screen
 
 
@@ -36,11 +38,12 @@ def make_face(
     yaw: float = 0.0,
     pitch: float = 0.0,
     roll_deg: float = 0.0,
+    head_position: tuple[float, float, float] = (0.0, 0.0, 60.0),
     frame: tuple[int, int] = FRAME,
 ) -> FaceObservation:
     """openness: (user's left, user's right) eye, 1 = open, 0 = shut.
     gaze: iris offset from the eye centre in eye widths (+x right, +y down).
-    yaw / pitch: nose offset from its neutral position, in eye distances (+ = right / down)."""
+    yaw / pitch / roll_deg: head pose in degrees; head_position: cm right, up, distance."""
     r = math.radians(roll_deg)
     u = np.array([math.cos(r), math.sin(r)])
     v = np.array([-math.sin(r), math.cos(r)])
@@ -58,9 +61,15 @@ def make_face(
             pts[upper, :2] = eye + u * dx * eye_width / 6 - v * half
             pts[lower, :2] = eye + u * dx * eye_width / 6 + v * half
         pts[iris, :2] = eye + u * gaze[0] * eye_width + v * gaze[1] * eye_width
-    pts[NOSE_TIP, :2] = c + u * yaw * eye_distance + v * (NOSE_DROP + pitch) * eye_distance
+    swing = NOSE_DEPTH * eye_distance
+    pts[NOSE_TIP, :2] = (
+        c
+        + u * swing * math.sin(math.radians(yaw))
+        + v * (NOSE_DROP * eye_distance + swing * math.sin(math.radians(pitch)))
+    )
     width, height = frame
-    return FaceObservation.from_normalized(pts / np.array([width, height, width]), frame, t)
+    norm = pts / np.array([width, height, width])
+    return FaceObservation.from_normalized(norm, frame, t, (yaw, pitch, roll_deg), head_position)
 
 
 def gaze_for(x: float, y: float, screen: tuple[int, int] = SCREEN) -> tuple[float, float]:

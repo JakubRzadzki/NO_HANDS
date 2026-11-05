@@ -264,7 +264,7 @@ def run(cfg: AppConfig) -> int:
             hands = stack.enter_context(HandTracker(cfg.tracker))
             stack.callback(controller.release_all)
             return _hands_loop(session, hands)
-        face = stack.enter_context(FaceTracker(cfg.face))
+        face = stack.enter_context(FaceTracker(cfg.face, cfg.camera.mirror))
         stack.callback(controller.release_all)
         return _face_loop(session, face)
 

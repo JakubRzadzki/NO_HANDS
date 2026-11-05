@@ -179,16 +179,19 @@ class EyeConfig:
 
 @dataclass
 class HeadConfig:
-    """--head: head movements press the arrow keys (turn left/right, nod down/tilt up).
+    """--head: quick head movements press the arrow keys (turn left/right, tilt up/nod down).
 
-    The head pose is the nose tip's offset from the midpoint between the eyes, measured in eye
-    distances in the face's own frame, relative to a neutral pose learned at start."""
+    Angles in degrees from MediaPipe's 3D head pose, relative to a neutral pose learned at start.
+    A key fires only for a quick move: the head must get from the neutral zone past the
+    threshold within gesture_time, like a swipe. Slowly turning to look at something else, or
+    a posture change, never presses anything."""
 
-    yaw_threshold: float = 0.12  # ~15 degrees of head turn
-    yaw_release: float = 0.06  # back within this = ready for the next move
-    pitch_threshold: float = 0.08  # ~10 degrees of nod
-    pitch_release: float = 0.04
-    repeat_delay: float = 0.6  # s: holding the head there repeats the key (0 = no repeat)
+    yaw_threshold: float = 15.0  # deg of head turn that presses Left / Right
+    yaw_release: float = 7.0  # back within this = neutral, ready for the next move
+    pitch_threshold: float = 12.0  # deg of tilt up / nod down that presses Up / Down
+    pitch_release: float = 6.0
+    gesture_time: float = 0.6  # s from leaving the neutral zone to crossing the threshold
+    repeat_delay: float = 0.0  # s: holding the head there repeats the key (0 = no repeat)
     repeat_interval: float = 0.25  # s between repeats
     neutral_adapt: float = 0.02  # per-frame pull of the neutral pose while the head is centred
 
@@ -296,6 +299,7 @@ class AppConfig:
                 0 < h.pitch_release < h.pitch_threshold,
                 "need 0 < head pitch_release < pitch_threshold",
             ),
+            (h.gesture_time > 0, "head.gesture_time must be > 0"),
             (h.repeat_delay >= 0 and h.repeat_interval > 0, "invalid head key repeat timing"),
             (0 <= h.neutral_adapt <= 1, "head.neutral_adapt must be in [0, 1]"),
         ]
