@@ -145,6 +145,13 @@ def test_hand_lost_mid_pinch_does_not_click_later() -> None:
     assert of(actions, Click) == [] and of(actions, Press) == []
 
 
+def test_hand_reappearing_already_pinched_needs_a_fresh_pinch() -> None:
+    d = settled()
+    d.hold(None, 0.5)
+    actions = d.hold(pinch("index"), 0.4) + d.hold(OPEN, 0.3)
+    assert of(actions, Click) == [] and of(actions, Press) == []
+
+
 def test_short_dropout_keeps_drag_long_dropout_releases() -> None:
     d = settled()
     d.hold(pinch("index"), 0.4)
@@ -210,6 +217,14 @@ def test_zoom_steps_follow_thumb_index_spread() -> None:
     zoom_out += d.hold(rock(0.45), 0.6)
     assert sum(z.steps for z in of(zoom_out, Zoom)) == -4  # (0.45 - 0.98) / 0.12 -> -4
     assert of(zoom_in + zoom_out, Click) == []
+
+
+def test_leaving_zoom_with_fingers_together_does_not_click() -> None:
+    d = settled()
+    d.hold(rock(0.5), 0.3)
+    d.hold(rock(0.08), 0.3)  # thumb on the index tip, still in ZOOM
+    actions = d.hold(pinch("index", 0.08), 0.4) + d.hold(OPEN, 0.3)  # back to POINTER
+    assert of(actions, Click) == [] and of(actions, Press) == []
 
 
 def test_fist_clutch_relative_mode_lets_hand_reposition() -> None:

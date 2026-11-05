@@ -194,6 +194,10 @@ class GestureEngine:
             for finger in PINCH_FINGERS
         }
         self._zoom_filter = OneEuroFilter(min_cutoff=3.0, beta=0.0)  # plain ~3 Hz low-pass
+        # A pinch may only engage after its fingers were seen apart in POINTER mode. Otherwise
+        # leaving ZOOM with thumb and index together, or the hand re-appearing mid-pinch, would
+        # fire a click nobody asked for. (Edge-triggered, not level-triggered.)
+        self._armed = dict.fromkeys(PINCH_FINGERS, False)
 
         self._mode = Mode.NO_HAND
         self._candidate: Mode | None = None
@@ -230,6 +234,7 @@ class GestureEngine:
         self._cursor_frozen = False
         for latch in (*self._pinch.values(), *self._finger.values(), self._joined):
             latch.reset()
+        self._armed = dict.fromkeys(PINCH_FINGERS, False)
         self._mode = Mode.NO_HAND
         self._candidate, self._candidate_frames = None, 0
         self._exit_scroll()
@@ -335,6 +340,8 @@ class GestureEngine:
             self._exit_scroll()
         elif previous is Mode.ZOOM:
             self._exit_zoom()
+        if self._mode is Mode.POINTER:
+            self._armed = dict.fromkeys(PINCH_FINGERS, False)
         return actions
 
     # -- POINTER: move, click, drag, right click, double click -----------------------------------
@@ -350,6 +357,9 @@ class GestureEngine:
         best, runner_up = ranked[0], ranked[1]
         clear_winner = d[runner_up] - d[best] >= cfg.pinch_ambiguity_margin
         busy = any(latch.active for latch in self._pinch.values())
+        for finger in PINCH_FINGERS:
+            if d[finger] > cfg.pinch_exit:
+                self._armed[finger] = True
 
         rose: dict[Finger, bool] = {}
         fell: dict[Finger, bool] = {}
@@ -358,7 +368,13 @@ class GestureEngine:
             if before:
                 latch.update(d[finger])  # release depends only on this finger's own distance
             else:
-                allowed = finger is best and clear_winner and not busy and not posture_pending
+                allowed = (
+                    finger is best
+                    and clear_winner
+                    and self._armed[finger]
+                    and not busy
+                    and not posture_pending
+                )
                 latch.update(d[finger] if allowed else math.inf)
             rose[finger] = latch.active and not before
             fell[finger] = before and not latch.active
