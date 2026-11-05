@@ -67,3 +67,53 @@ przypadkowego kliknięcia.
 | `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | jak w nazwie |
 
 Pozostałe parametry (progi, filtr, ROI, prędkość scrolla) są w `config.py`.
+
+## Architektura
+
+```text
+wątek kamery ──najnowsza klatka──▶ HandTracker ──HandObservation──▶ GestureEngine ──akcje──▶ OSController
+(src/camera.py)                   (MediaPipe)                       │   (maszyna stanów)        (pynput)
+                                                                    ▼
+                                                              CursorMapper
+                                                      (ROI → nadmiar krawędzi → filtr 1€)
+```
+
+| Plik | Odpowiedzialność |
+| --- | --- |
+| `config.py` | wszystkie parametry jako dataclassy + walidacja spójności (np. `pinch_enter < pinch_exit`) |
+| `src/camera.py` | wątek, który ciągle opróżnia kamerę i trzyma tylko najnowszą klatkę |
+| `src/hand_tracker.py` | MediaPipe Tasks API (`HandLandmarker`, tryb VIDEO), punkty w izotropowej przestrzeni pikseli |
+| `src/smoother.py` | filtr 1€ dla wektorów (jedna wspólna częstotliwość odcięcia dla x i y) |
+| `src/pointer.py` | aktywny obszar (ROI) dopasowany do proporcji ekranu, mapowanie absolute/relative |
+| `src/gesture_engine.py` | cechy dłoni, klasyfikacja postawy z debouncingiem, zatrzaski z histerezą, kliknięcia, scroll, zoom |
+| `src/os_controller.py` | wykonywanie akcji, śledzenie wciśniętych przycisków, `release_all()`, rozmiar ekranu |
+| `src/hud.py` | podgląd: ROI w kolorze stanu, linie bliskości szczypnięć, FPS, opóźnienie, metryki |
+
+Silnik gestów nie wywołuje systemu: zwraca obiekty akcji (`Click`, `Press`, `Scroll`…). Dzięki
+temu cała maszyna stanów jest testowana na syntetycznych dłoniach (`tests/handgen.py`) bez
+kamery i bez ekranu.
+
+## Decyzje inżynierskie
+
+- **Jedna przestrzeń miar.** Odległości liczone są w pikselach `(x·W, y·H, z·W)`, a nie na
+  znormalizowanych współrzędnych. Przy kadrze 16:9 jednostka x to 1280 px, a jednostka y tylko
+  720 px, więc `hypot` na surowych wartościach zmienia się, gdy dłoń się obraca. Dopiero potem
+  wszystko jest dzielone przez długość dłoni (LM 0 → LM 9).
+- **Wyprostowanie palca:** `dist(nadgarstek, czubek) / dist(nadgarstek, PIP)`. Na prawdziwych
+  danych MediaPipe wyprostowane palce dają ≥ 1,28, zgięte ≤ 0,86, niezależnie od obrotu dłoni.
+  Popularny test `tip.y < pip.y` przestaje działać, gdy dłoń przechyli się na bok.
+- **Arbitraż szczypnięć:** pinch może zacząć tylko palec wyraźnie najbliższy kciukowi. Przy
+  kciuku na wskazującym czubek środkowego też jest blisko; bez tej reguły jedno szczypnięcie
+  potrafi wywołać lewy i prawy klik naraz.
+- **Filtr 1€ w pikselach ekranu**, `beta` zależy od jednostek. Symulacja przy szumie 2–4 px:
+  `beta=0.05` daje ~15 px maksymalnego opóźnienia przy szybkim ruchu i ~1 px drgań w spoczynku;
+  `beta=0.01` daje 3× większe opóźnienie przy tylko o połowę mniejszych drganiach.
+- **Krawędzie ekranu:** ROI jest przycinane *przed* filtrem (wyjście ręką poza ramkę nie
+  zostawia zaległości do „odkręcenia”), a krawędź ROI wypada 3% *za* krawędzią ekranu. Bez tego
+  filtr wykładniczy zbliża się do ostatniego piksela asymptotycznie i narożniki (przycisk
+  zamknięcia, menu Start) są trudne do trafienia.
+- **ROI w proporcjach ekranu:** wysokość ramki wynika z szerokości tak, żeby wzmocnienie w osi x
+  i y było takie samo (ramka 0,6×0,6 z kamery 4:3 na ekranie 16:9 dałaby o 33% czulszy ruch w
+  poziomie).
+- **Scroll i zoom zależne od czasu, nie od liczby klatek:** prędkość × dt z akumulatorem
+  ułamków. Scroll „N ząbków na klatkę” jest dwa razy szybszy przy 60 FPS niż przy 30 FPS.
