@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from config import FaceConfig, GestureConfig, HeadConfig
+from config import FaceConfig, GestureConfig, HeadConfig, SlidesConfig
 from src.eye_engine import FaceMode, FaceOutput
 from src.face_tracker import EYE_OUTLINES, IRIS_CENTERS, NOSE_TIP, FaceObservation
 from src.gesture_engine import PINCH_FINGERS, EngineOutput, Finger, LeftState, Mode
@@ -34,6 +34,7 @@ WHITE: Color = (255, 255, 255)
 BLACK: Color = (0, 0, 0)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 CLICK_LABELS = {"LEFT CLICK", "RIGHT CLICK", "DOUBLE CLICK", "DROP"}
+SLIDE_EVENTS = {"RIGHT >>", "<< LEFT", "ZOOM IN", "ZOOM OUT"}
 
 
 @dataclass
@@ -77,6 +78,8 @@ def state_color(out: EngineOutput, paused: bool) -> Color:
         return MAGENTA
     if out.mode is Mode.MEDIA:
         return ORANGE
+    if out.mode is Mode.SLIDES:
+        return GREEN if out.label in SLIDE_EVENTS else CYAN
     if out.mode is Mode.SWITCH:
         return WHITE
     if out.mode is Mode.NO_HAND:
@@ -100,24 +103,35 @@ def _pt(p: npt.NDArray[np.int_]) -> tuple[int, int]:
 
 
 class Hud:
-    def __init__(self, gesture_cfg: GestureConfig, show_landmarks: bool = True) -> None:
+    def __init__(
+        self,
+        gesture_cfg: GestureConfig,
+        show_landmarks: bool = True,
+        slides: SlidesConfig | None = None,  # set in --slides: a panel for strokes instead
+    ) -> None:
         self.cfg = gesture_cfg
         self.show_landmarks = show_landmarks
+        self.slides = slides
 
     def draw(
         self,
         frame: npt.NDArray[np.uint8],
-        roi: Roi,
+        roi: Roi | None,
         obs: HandObservation | None,
         out: EngineOutput,
         stats: LoopStats,
         paused: bool,
     ) -> None:
-        """Draw in place on ``frame`` (the mirrored camera image)."""
+        """Draw in place on ``frame`` (the mirrored camera image). ``roi`` is None in --slides,
+        which has no cursor."""
         h, w = frame.shape[:2]
         color = state_color(out, paused)
-        x0, y0, x1, y1 = roi.to_pixels((w, h))
-        cv2.rectangle(frame, (x0, y0), (x1, y1), color, 2, cv2.LINE_AA)
+        if roi is not None:
+            x0, y0, x1, y1 = roi.to_pixels((w, h))
+            cv2.rectangle(frame, (x0, y0), (x1, y1), color, 2, cv2.LINE_AA)
+        if len(out.trail) > 1:  # --slides: the wrist's path over the last second and a half
+            path = np.rint(np.asarray(out.trail)).astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(frame, [path], False, color, 2, cv2.LINE_AA)
 
         if obs is not None:
             pts = np.rint(obs.norm[:, :2] * (w, h)).astype(int)
@@ -126,7 +140,7 @@ class Hud:
                     cv2.line(frame, _pt(pts[a]), _pt(pts[b]), GRAY, 1, cv2.LINE_AA)
                 for p in pts:
                     cv2.circle(frame, _pt(p), 3, WHITE, -1, cv2.LINE_AA)
-            if out.features is not None and not paused:
+            if out.features is not None and not paused and out.mode is not Mode.SLIDES:
                 self._draw_gesture_overlay(frame, pts, out)
                 ax, ay = out.features.anchor
                 anchor = (int(ax * w), int(ay * h))
@@ -173,6 +187,10 @@ class Hud:
                 WHITE,
             ),
         ]
+        if self.slides is not None:
+            self._slides_panel(lines, out, self.slides)
+            draw_text_panel(frame, lines)
+            return
         if out.features is not None:
             p = out.features.pinch
             lines.append(
@@ -207,6 +225,31 @@ class Hud:
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)
+
+    def _slides_panel(
+        self, lines: list[tuple[str, float, Color]], out: EngineOutput, cfg: SlidesConfig
+    ) -> None:
+        if out.stroke is not None:
+            dx, dy = out.stroke
+            lines.append(
+                (
+                    f"stroke x {dx:+.2f}  y {dy:+.2f} palm lengths "
+                    f"(slide at {cfg.swipe_distance:.1f}, zoom at {cfg.zoom_distance:.1f})",
+                    0.45,
+                    WHITE,
+                )
+            )
+        if out.features is not None:
+            fingers = " ".join(
+                name if out.extended.get(finger) else "."
+                for name, finger in zip("IMRP", Finger, strict=True)
+            )
+            is_open = sum(out.extended.values()) >= cfg.min_fingers
+            state = "open hand" if is_open else "not open: strokes are ignored"
+            lines.append((f"fingers {fingers}  {state}", 0.45, WHITE if is_open else GRAY))
+        lines.append(("quick stroke left / right = slide, up / down = zoom", 0.4, GRAY))
+        lines.append(("start and stop with the hand still; move a fist to reposition", 0.4, GRAY))
+        lines.append(("q/ESC quit   p pause   ctrl+alt+p / ctrl+alt+q from anywhere", 0.4, GRAY))
 
 
 def draw_text_panel(frame: npt.NDArray[np.uint8], lines: list[tuple[str, float, Color]]) -> None:
