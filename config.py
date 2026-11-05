@@ -13,6 +13,11 @@ MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/latest/hand_landmarker.task"
 )
+FACE_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/latest/face_landmarker.task"
+)
+INPUT_MODES = ("hands", "eyes", "head")
 
 
 @dataclass
@@ -126,6 +131,69 @@ class MediaConfig:
 
 
 @dataclass
+class FaceConfig:
+    """Face tracking shared by --eyes and --head.
+
+    Eye openness = eye aspect ratio (lid opening / eye width) divided by that eye's own "fully
+    open" value, learned while running, so the thresholds fit narrow and wide eyes alike.
+    Looking down lowers the upper lid to roughly 0.6-0.75, which is why "closed" is well
+    below that."""
+
+    model_path: str = "models/face_landmarker.task"
+    model_url: str = FACE_MODEL_URL
+    closed_below: float = 0.40
+    open_above: float = 0.60
+    pause_hold: float = 1.5  # s: both eyes closed this long = pause / resume
+
+
+@dataclass
+class EyeConfig:
+    """--eyes: hands-free mouse. The cursor follows the gaze (or the nose), eye gestures click.
+
+    Webcam gaze is coarse: the eye is ~50 px wide in a 720p frame, so one pixel of iris noise
+    is ~100 screen px. Fixation filtering keeps the cursor still while you look at something;
+    the nose pointer is the precise alternative."""
+
+    pointer: str = "gaze"  # "gaze": calibrated eye gaze; "nose": the cursor follows the nose
+    recalibrate: bool = False  # force a new gaze calibration at start
+    calibration_path: str = "models/gaze_calibration.json"
+    blink_min: float = 0.35  # s: shorter closures are natural blinks and are ignored
+    blink_max: float = 1.00  # s: closures in [blink_min, blink_max] are deliberate = left click
+    double_click_window: float = 1.2  # s: a second deliberate blink within this = double click
+    wink_min: float = 0.30  # s: one eye closed while the other stays open
+    swap_winks: bool = False  # default: right wink = right click, left wink = scroll mode
+    # Gaze cursor: fixation filter
+    fixation_radius: float = 0.07  # fraction of screen width; a farther jump starts a new fixation
+    saccade_frames: int = 2  # frames outside the radius in a row before the cursor jumps
+    fixation_smoothing: float = 0.12  # per-frame pull towards the gaze inside a fixation
+    # Nose pointer: how far (fraction of frame width) the nose travels to cross the screen
+    nose_roi_width: float = 0.12
+    # Scroll mode: look above / below the screen centre
+    scroll_deadzone: float = 0.15  # fraction of screen height around the centre
+    scroll_gain: float = 40.0  # ticks/s per screen height beyond the dead zone
+    scroll_max_rate: float = 15.0  # ticks/s
+    # Gaze calibration: 3x3 dots
+    calib_settle: float = 0.7  # s for the eyes to land on a dot before sampling
+    calib_sample: float = 1.0  # s of samples per dot
+
+
+@dataclass
+class HeadConfig:
+    """--head: head movements press the arrow keys (turn left/right, nod down/tilt up).
+
+    The head pose is the nose tip's offset from the midpoint between the eyes, measured in eye
+    distances in the face's own frame, relative to a neutral pose learned at start."""
+
+    yaw_threshold: float = 0.12  # ~15 degrees of head turn
+    yaw_release: float = 0.06  # back within this = ready for the next move
+    pitch_threshold: float = 0.08  # ~10 degrees of nod
+    pitch_release: float = 0.04
+    repeat_delay: float = 0.6  # s: holding the head there repeats the key (0 = no repeat)
+    repeat_interval: float = 0.25  # s between repeats
+    neutral_adapt: float = 0.02  # per-frame pull of the neutral pose while the head is centred
+
+
+@dataclass
 class OutputConfig:
     dry_run: bool = False  # recognise gestures but never touch the real mouse/keyboard
     screen_size: tuple[int, int] | None = None  # None = auto-detect the primary monitor
@@ -151,12 +219,16 @@ class HotkeyConfig:
 
 @dataclass
 class AppConfig:
+    input_mode: str = "hands"  # "hands", "eyes" (--eyes) or "head" (--head)
     camera: CameraConfig = field(default_factory=CameraConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
     pointer: PointerConfig = field(default_factory=PointerConfig)
     gesture: GestureConfig = field(default_factory=GestureConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
+    face: FaceConfig = field(default_factory=FaceConfig)
+    eyes: EyeConfig = field(default_factory=EyeConfig)
+    head: HeadConfig = field(default_factory=HeadConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     hud: HudConfig = field(default_factory=HudConfig)
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)
@@ -195,7 +267,35 @@ class AppConfig:
             (m.swipe_action in ("tracks", "arrows"), "media.swipe_action must be tracks or arrows"),
             (0 <= m.knob_deadzone_deg < 90, "media.knob_deadzone_deg must be in [0, 90)"),
             (m.knob_rate > 0 and m.knob_max_rate > 0, "media knob rates must be > 0"),
+            (self.input_mode in INPUT_MODES, f"input_mode must be one of {INPUT_MODES}"),
+            *self._face_checks(),
         ]
         errors = [message for ok, message in checks if not ok]
         if errors:
             raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
+
+    def _face_checks(self) -> list[tuple[bool, str]]:
+        fc, e, h = self.face, self.eyes, self.head
+        return [
+            (0 < fc.closed_below < fc.open_above < 1, "need 0 < closed_below < open_above < 1"),
+            (e.pointer in ("gaze", "nose"), "eyes.pointer must be gaze or nose"),
+            (
+                0 < e.blink_min < e.blink_max < fc.pause_hold,
+                "need 0 < blink_min < blink_max < pause_hold",
+            ),
+            (e.wink_min > 0 and e.double_click_window > 0, "eye wink/double-click times > 0"),
+            (0 < e.fixation_radius < 1, "eyes.fixation_radius must be in (0, 1)"),
+            (e.saccade_frames >= 1, "eyes.saccade_frames must be >= 1"),
+            (0 < e.fixation_smoothing <= 1, "eyes.fixation_smoothing must be in (0, 1]"),
+            (0 < e.nose_roi_width <= 1, "eyes.nose_roi_width must be in (0, 1]"),
+            (0 <= e.scroll_deadzone < 0.5, "eyes.scroll_deadzone must be in [0, 0.5)"),
+            (e.scroll_gain > 0 and e.scroll_max_rate > 0, "eye scroll gain/rate must be > 0"),
+            (e.calib_settle >= 0 and e.calib_sample > 0, "invalid gaze calibration timing"),
+            (0 < h.yaw_release < h.yaw_threshold, "need 0 < head yaw_release < yaw_threshold"),
+            (
+                0 < h.pitch_release < h.pitch_threshold,
+                "need 0 < head pitch_release < pitch_threshold",
+            ),
+            (h.repeat_delay >= 0 and h.repeat_interval > 0, "invalid head key repeat timing"),
+            (0 <= h.neutral_adapt <= 1, "head.neutral_adapt must be in [0, 1]"),
+        ]
