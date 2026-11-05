@@ -97,6 +97,7 @@ class CursorMapper:
         self._target: FloatArray | None = None  # filtered position, screen px, may be off-screen
         self._last_pos: tuple[int, int] | None = None  # absolute: last position sent
         self._residual = np.zeros(2)  # relative: sub-pixel motion carried to the next frame
+        self._was_frozen = False
 
     @property
     def target(self) -> FloatArray | None:
@@ -109,16 +110,16 @@ class CursorMapper:
         self._target = None
         self._last_pos = None
         self._residual[:] = 0.0
+        self._was_frozen = False
 
     def update(
         self, anchor: tuple[float, float], t: float, frozen: bool = False
     ) -> MoveTo | MoveBy | None:
         """Feed the anchor (normalized frame coords). Always updates the filter so it stays
         converged, but emits nothing while ``frozen``."""
-        previous = self._target
-        self._target = self._filter(self._raw_target(anchor), t)
-
+        raw = self._raw_target(anchor)
         if self.mode == "absolute":
+            self._target = self._filter(raw, t)
             if frozen:
                 return None
             x = round(min(max(float(self._target[0]), 0.0), self.screen_w - 1.0))
@@ -128,6 +129,14 @@ class CursorMapper:
             self._last_pos = (x, y)
             return MoveTo(x, y)
 
+        # Relative mode. While frozen the filter still trails the moving hand; on unfreezing,
+        # that lag would "leak out" as cursor motion nobody made. Restart from the hand instead.
+        unfreezing = self._was_frozen and not frozen
+        self._was_frozen = frozen
+        if unfreezing:
+            self._filter.reset()
+        previous = None if unfreezing else self._target
+        self._target = self._filter(raw, t)
         if frozen or previous is None:
             self._residual[:] = 0.0
             return None

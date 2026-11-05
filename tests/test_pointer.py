@@ -99,3 +99,21 @@ def test_relative_mode_accumulates_subpixel_motion() -> None:
         total += move.dx if isinstance(move, MoveBy) else 0
         t += 1 / 60
     assert abs(total - 60) <= 1
+
+
+def test_relative_mode_discards_motion_while_frozen() -> None:
+    m = mapper(mode="relative")
+    t = 0.0
+    for _ in range(60):
+        m.update((0.5, 0.5), t)
+        t += 1 / 60
+    moved = 0
+    for i in range(60):
+        move = m.update((0.5 - 0.2 * i / 60, 0.5), t, frozen=True)
+        moved += abs(move.dx) if isinstance(move, MoveBy) else 0
+        t += 1 / 60
+    for _ in range(30):
+        move = m.update((0.3, 0.5), t)
+        moved += abs(move.dx) if isinstance(move, MoveBy) else 0
+        t += 1 / 60
+    assert moved <= 3
