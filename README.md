@@ -117,3 +117,46 @@ kamery i bez ekranu.
   poziomie).
 - **Scroll i zoom zależne od czasu, nie od liczby klatek:** prędkość × dt z akumulatorem
   ułamków. Scroll „N ząbków na klatkę” jest dwa razy szybszy przy 60 FPS niż przy 30 FPS.
+
+## Strojenie
+
+Uruchom z HUD-em: panel pokazuje na żywo odległości szczypnięć i stosunki wyprostowania palców,
+więc progi ustawiasz na podstawie liczb, a nie na wyczucie.
+
+| Objaw | Parametr w `config.py` |
+| --- | --- |
+| kursor drży, gdy dłoń stoi | `FilterConfig.min_cutoff` ↓ (np. 0,6) |
+| kursor nie nadąża przy szybkim ruchu | `FilterConfig.beta` ↑ |
+| trzeba wyciągać rękę | `--sensitivity 1.3` albo `PointerConfig.roi_width` ↓ |
+| klik nie wchodzi | `GestureConfig.pinch_enter` ↑ (np. 0,26); sprawdź wartość „pinch I” w HUD |
+| przypadkowe kliki | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
+| kursor „staje”, gdy kciuk jest luźno przy palcu | `approach_freeze` ↓ (0 wyłącza zamrażanie) |
+| scroll za szybki / za wolny | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
+
+## Ograniczenia
+
+- **Linux:** tylko sesja X11; pynput nie wstrzykuje zdarzeń pod Waylandem. MediaPipe ładuje
+  `libEGL.so.1`, więc na minimalnych systemach potrzebny jest pakiet `libegl1`.
+- **macOS:** terminal potrzebuje uprawnień Dostępność (sterowanie) i Monitorowanie wejścia
+  (globalne skróty). Ctrl + kółko w większości aplikacji macOS nie powiększa treści; modyfikator
+  zmienisz w `OutputConfig.zoom_modifier` (`"cmd"`). MediaPipe 1.2.2 nie ma wheeli dla Maców z
+  procesorem Intel.
+- **Wiele monitorów:** Windows i macOS mapują na monitor główny, X11 na cały wirtualny pulpit.
+  Inny obszar ustawisz przez `--screen`.
+- **Zasięg wykrywania:** detektor dłoni MediaPipe widzi cały kadr przeskalowany do 192 px. Dłoń,
+  która w kadrze jest mała (daleko od kamery, szeroki obiektyw), nie zostanie wykryta;
+  sprawdzone na próbce, która zaczęła być wykrywana dopiero po wykadrowaniu 80% obrazu.
+- Trzymaj w kadrze jedną dłoń (`num_hands=1`).
+
+## Testy
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+```bash
+pytest && ruff check . && ruff format --check . && mypy .
+```
+
+Testy nie potrzebują kamery ani ekranu. Test `HandTracker` na prawdziwym MediaPipe uruchamia się
+tylko wtedy, gdy model jest już w `models/`.
