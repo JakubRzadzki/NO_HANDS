@@ -98,6 +98,8 @@ class PynputBackend:
         "volume_down": "media_volume_down",
         "left": "left",
         "right": "right",
+        "up": "up",
+        "down": "down",
     }
 
     def __init__(self) -> None:
