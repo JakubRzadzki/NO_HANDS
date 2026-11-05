@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
 
 import main
-from config import AppConfig, CameraConfig, TrackerConfig
-from src.camera import FramePacket
+from config import AppConfig, CameraConfig, FaceConfig, TrackerConfig
+from src.camera import FramePacket, ProbeResult
+from src.face_tracker import FaceObservation
 from src.hand_tracker import HandObservation
 from src.os_controller import OSController
+from tests.facegen import make_face
 from tests.handgen import OPEN, make_obs, pinch
 from tests.test_os_controller import RecordingBackend
 
@@ -143,3 +145,83 @@ def test_default_config_is_valid_and_bad_values_are_reported() -> None:
     with pytest.raises(ValueError) as info:
         cfg.validate()
     assert "pinch_enter" in str(info.value) and "pointer mode" in str(info.value)
+
+
+class ScriptedFace:
+    """FaceTracker stand-in: plays a list of (frames, face kwargs) and then hits Ctrl+C."""
+
+    script: ClassVar[list[tuple[int, dict[str, Any]]]] = []
+
+    def __init__(self, cfg: FaceConfig) -> None:
+        self.last_inference_ms = 4.0
+        self.frames = 0
+
+    def __enter__(self) -> ScriptedFace:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def process(self, frame: Any, timestamp: float) -> FaceObservation | None:
+        self.frames += 1
+        seen = 0
+        for count, face in self.script:
+            seen += count
+            if self.frames <= seen:
+                return make_face(timestamp, **face)
+        raise KeyboardInterrupt
+
+
+def run_face_mode(
+    monkeypatch: pytest.MonkeyPatch, mode: str, script: list[tuple[int, dict[str, Any]]]
+) -> None:
+    monkeypatch.setattr(main, "ThreadedCamera", FakeCamera)
+    monkeypatch.setattr(main, "FaceTracker", ScriptedFace)
+    monkeypatch.setattr(ScriptedFace, "script", script)
+    cfg = headless_config()
+    cfg.input_mode = mode
+    cfg.eyes.pointer = "nose"  # the gaze pointer would open the calibration window
+    with pytest.raises(KeyboardInterrupt):
+        main.run(cfg)
+
+
+def test_head_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_face_mode(monkeypatch, "head", [(30, {}), (10, {"yaw": 0.2})])  # 60 FPS fake camera
+    assert ("tap", "right") in backend.calls
+
+
+def test_eyes_mode_end_to_end(backend: RecordingBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = {"openness": (0.05, 0.05)}
+    run_face_mode(monkeypatch, "eyes", [(60, {}), (30, closed), (10, {})])  # 0.5 s blink
+    assert ("click", "left", 1) in backend.calls
+
+
+def test_eye_and_head_flags_select_the_input_mode() -> None:
+    parse = main.build_parser().parse_args
+    eyes = main.config_from_args(parse(["--eyes", "--eyes-pointer", "nose", "--recalibrate"]))
+    assert (eyes.input_mode, eyes.eyes.pointer, eyes.eyes.recalibrate) == ("eyes", "nose", True)
+    assert main.config_from_args(parse(["--head"])).input_mode == "head"
+    assert main.config_from_args(parse([])).input_mode == "hands"
+    with pytest.raises(SystemExit):
+        parse(["--eyes", "--head"])  # one input mode at a time
+    assert main.main(["--eyes-pointer", "nose"]) == 2  # needs --eyes
+
+
+def test_probe_camera_flag_prints_the_measured_modes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    results = [
+        ProbeResult((1920, 1080, 60), (1920, 1080), 30.1, "MJPG"),
+        ProbeResult((1280, 720, 60), (1280, 720), 59.8, "MJPG"),
+        ProbeResult((640, 480, 60), None, 0.0, "?"),
+    ]
+    monkeypatch.setattr(main, "probe_camera", lambda device_id: results)
+    assert main.main(["--probe-camera"]) == 0
+    out = capsys.readouterr().out
+    assert "1920x1080@60" in out and "not opened" in out
+    assert "--width 1280 --height 720" in out  # 60 FPS beats more pixels at 30 FPS
+
+
+def test_camera_settings_flag() -> None:
+    args = main.build_parser().parse_args(["--camera-settings"])
+    assert main.config_from_args(args).camera.open_settings

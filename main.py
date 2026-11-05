@@ -1,9 +1,11 @@
 """AI Virtual Mouse - entry point.
 
-python main.py                     # webcam 0 with the HUD
+python main.py                     # hand gestures, webcam 0 with the HUD
 python main.py --dry-run           # recognise gestures without touching the real mouse
 python main.py --relative          # mouse-like relative mode: a fist "lifts" the mouse
-python main.py --camera-id 1 --sensitivity 1.5 --no-hud
+python main.py --eyes              # hands-free: the cursor follows your gaze, blink to click
+python main.py --eyes --eyes-pointer nose   # cursor follows the nose, blink to click
+python main.py --head              # head movements press the arrow keys
 """
 
 from __future__ import annotations
@@ -16,20 +18,27 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import cv2
 
 from config import AppConfig, HotkeyConfig
-from src.camera import ThreadedCamera
+from src.calibration_ui import run_calibration
+from src.camera import ThreadedCamera, probe_camera
+from src.eye_engine import EyeEngine, FaceMode, FaceOutput
+from src.face_tracker import FaceTracker
+from src.gaze import GazeCalibration
 from src.gesture_engine import EngineOutput, GestureEngine, Mode
 from src.hand_tracker import HandTracker
-from src.hud import Hud, LoopStats
+from src.head_engine import HeadArrows
+from src.hud import FaceHud, Hud, LoopStats
 from src.os_controller import OSController, detect_screen_size, enable_dpi_awareness
 from src.pointer import CursorMapper, Roi
 
 log = logging.getLogger("virtual_mouse")
 FALLBACK_SCREEN = (1920, 1080)
+HUD_DISPLAY_WIDTH = 1280  # larger frames are shrunk for display only; tracking uses full size
 
 
 def _screen_size_arg(text: str) -> tuple[int, int]:
@@ -44,9 +53,30 @@ def _screen_size_arg(text: str) -> tuple[int, int]:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Control the mouse with hand gestures (MediaPipe + OpenCV + pynput)."
+        description="Hands-free mouse: hand gestures (default), eyes (--eyes) or head (--head)."
     )
+    modes = p.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--eyes", action="store_true", help="eyes only: look to move the cursor, blink to click"
+    )
+    modes.add_argument("--head", action="store_true", help="head movements press arrow keys")
+    p.add_argument(
+        "--eyes-pointer",
+        choices=["gaze", "nose"],
+        help="with --eyes: cursor follows the gaze (default) or the nose (more precise)",
+    )
+    p.add_argument("--recalibrate", action="store_true", help="with --eyes: recalibrate the gaze")
     p.add_argument("--camera-id", type=int, default=0, help="webcam index (default: 0)")
+    p.add_argument(
+        "--probe-camera",
+        action="store_true",
+        help="measure which resolutions / frame rates the camera really delivers, then exit",
+    )
+    p.add_argument(
+        "--camera-settings",
+        action="store_true",
+        help="Windows: open the camera driver's settings (exposure, low-light compensation)",
+    )
     p.add_argument(
         "--no-hud",
         action="store_true",
@@ -64,8 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-run", action="store_true", help="recognise gestures but never touch the real mouse"
     )
-    p.add_argument("--width", type=int, help="requested camera width (default: 1280)")
-    p.add_argument("--height", type=int, help="requested camera height (default: 720)")
+    p.add_argument("--width", type=int, help="requested camera width (default: 1920)")
+    p.add_argument("--height", type=int, help="requested camera height (default: 1080)")
     p.add_argument("--fps", type=int, help="requested camera FPS (default: 60)")
     p.add_argument(
         "--screen", type=_screen_size_arg, metavar="WxH", help="override the detected screen size"
@@ -78,7 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def config_from_args(args: argparse.Namespace) -> AppConfig:
+    if (args.eyes_pointer or args.recalibrate) and not args.eyes:
+        raise ValueError("--eyes-pointer and --recalibrate only work together with --eyes")
     cfg = AppConfig()
+    cfg.input_mode = "eyes" if args.eyes else "head" if args.head else "hands"
+    if args.eyes_pointer:
+        cfg.eyes.pointer = args.eyes_pointer
+    cfg.eyes.recalibrate = args.recalibrate
     cfg.camera.device_id = args.camera_id
     if args.width:
         cfg.camera.width = args.width
@@ -87,6 +123,7 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     if args.fps:
         cfg.camera.fps = args.fps
     cfg.camera.mirror = not args.no_mirror
+    cfg.camera.open_settings = args.camera_settings
     if args.model:
         cfg.tracker.model_path = args.model
     cfg.pointer.sensitivity = args.sensitivity
@@ -141,6 +178,59 @@ class _WindowWatch:
         return self._seen_visible
 
 
+@dataclass
+class _Session:
+    """What every input mode's loop needs."""
+
+    cfg: AppConfig
+    camera: ThreadedCamera
+    controller: OSController
+    screen: tuple[int, int]
+    stop: threading.Event
+    pause_toggle: threading.Event  # set by the hotkey thread or the p key
+
+
+def _show(name: str, frame: Any) -> None:
+    height, width = frame.shape[:2]
+    if width > HUD_DISPLAY_WIDTH:
+        size = (HUD_DISPLAY_WIDTH, round(height * HUD_DISPLAY_WIDTH / width))
+        frame = cv2.resize(frame, size, interpolation=cv2.INTER_LINEAR)
+    cv2.imshow(name, frame)
+
+
+def print_probe(device_id: int) -> int:
+    print(f"Probing camera {device_id}: each mode is measured for a moment (~15 s in total)...")
+    results = probe_camera(device_id)
+    print(f"{'requested':>16}  {'delivered':>11}  {'measured FPS':>12}  format")
+    for r in results:
+        requested = f"{r.requested[0]}x{r.requested[1]}@{r.requested[2]}"
+        delivered = "not opened" if r.size is None else f"{r.size[0]}x{r.size[1]}"
+        print(f"{requested:>16}  {delivered:>11}  {r.fps:12.1f}  {r.fourcc}")
+    working = [r for r in results if r.size is not None and r.fps > 0]
+    if not working:
+        print("The camera delivered no frames. Is it in use by another program?")
+        return 1
+    # Prefer ~60 FPS (latency), then the most pixels (precision, above all for --eyes).
+    best = max(working, key=lambda r: (r.fps >= 50, r.size[0] * r.size[1] if r.size else 0))
+    assert best.size is not None
+    width, height = best.size
+    print(f"Best: {width}x{height} at {best.fps:.0f} FPS -> --width {width} --height {height}")
+    if best.fps < 50:
+        print(
+            "No mode reached 60 FPS: the camera is the limit. More light helps (webcams lower "
+            "the frame rate to expose longer); a 60 FPS USB webcam helps most."
+        )
+    return 0
+
+
+def _describe(cfg: AppConfig) -> str:
+    if cfg.input_mode == "eyes":
+        return f"eyes ({cfg.eyes.pointer} pointer)"
+    if cfg.input_mode == "head":
+        return "head (arrow keys)"
+    return f"hands ({cfg.pointer.mode} pointer)"
+
+
 def run(cfg: AppConfig) -> int:
     enable_dpi_awareness()  # before any coordinate is queried or set (no-op off Windows)
     screen = cfg.output.screen_size or detect_screen_size()
@@ -148,15 +238,15 @@ def run(cfg: AppConfig) -> int:
         screen = FALLBACK_SCREEN
         log.warning("Screen size unknown, assuming %dx%d (override with --screen).", *screen)
     log.info(
-        "Screen %dx%d, %s pointer%s",
+        "Screen %dx%d, input: %s%s",
         *screen,
-        cfg.pointer.mode,
+        _describe(cfg),
         " (dry run: no real input)" if cfg.output.dry_run else "",
     )
 
     controller = OSController.create(cfg.output.dry_run, cfg.output.zoom_modifier)
     stop = threading.Event()
-    pause_toggle = threading.Event()  # set by the hotkey thread, consumed by the main loop
+    pause_toggle = threading.Event()
 
     with contextlib.ExitStack() as stack:
         previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -167,66 +257,165 @@ def run(cfg: AppConfig) -> int:
         if cfg.hud.enabled:
             stack.callback(cv2.destroyAllWindows)
         camera = stack.enter_context(ThreadedCamera(cfg.camera))
-        tracker = stack.enter_context(HandTracker(cfg.tracker))
-        # Registered last, so it runs first on *any* exit (normal, exception, Ctrl+C):
-        # a mouse button or Ctrl key must never stay held after we are gone.
+        session = _Session(cfg, camera, controller, screen, stop, pause_toggle)
+        # release_all is registered after the tracker, so it runs first on *any* exit (normal,
+        # exception, Ctrl+C): a mouse button or Ctrl key must never stay held after we are gone.
+        if cfg.input_mode == "hands":
+            hands = stack.enter_context(HandTracker(cfg.tracker))
+            stack.callback(controller.release_all)
+            return _hands_loop(session, hands)
+        face = stack.enter_context(FaceTracker(cfg.face))
         stack.callback(controller.release_all)
+        return _face_loop(session, face)
 
-        p = cfg.pointer
-        roi = Roi.for_screen(camera.frame_size, screen, p.roi_width, p.roi_center, p.sensitivity)
-        mapper = CursorMapper(roi, screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
-        engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
-        hud = Hud(cfg.gesture, cfg.hud.show_landmarks) if cfg.hud.enabled else None
-        window = _WindowWatch(cfg.hud.window_name)
-        if hud is not None:
-            cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
-        stats = LoopStats()
-        paused = False
-        last_seq = -1
 
-        while not stop.is_set():
-            packet = camera.read(after_seq=last_seq, timeout=1.0)
-            if packet is None:
-                if not camera.is_running:
-                    log.error("Camera stopped: %s", camera.error or "unknown reason")
-                    return 1
-                continue
-            last_seq = packet.seq
+def _hands_loop(s: _Session, tracker: HandTracker) -> int:
+    cfg, camera, controller = s.cfg, s.camera, s.controller
+    p = cfg.pointer
+    roi = Roi.for_screen(camera.frame_size, s.screen, p.roi_width, p.roi_center, p.sensitivity)
+    mapper = CursorMapper(roi, s.screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
+    engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
+    hud = Hud(cfg.gesture, cfg.hud.show_landmarks) if cfg.hud.enabled else None
+    window = _WindowWatch(cfg.hud.window_name)
+    if hud is not None:
+        cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
+    stats = LoopStats()
+    paused = False
+    last_seq = -1
 
-            if pause_toggle.is_set():
-                pause_toggle.clear()
-                paused = not paused
-                if paused:
-                    controller.apply(engine.reset())
-                    controller.release_all()
-                log.info("Paused" if paused else "Resumed")
+    while not s.stop.is_set():
+        packet = camera.read(after_seq=last_seq, timeout=1.0)
+        if packet is None:
+            if not camera.is_running:
+                log.error("Camera stopped: %s", camera.error or "unknown reason")
+                return 1
+            continue
+        last_seq = packet.seq
 
+        if s.pause_toggle.is_set():
+            s.pause_toggle.clear()
+            paused = not paused
             if paused:
-                # Keep tracking only to show the hand in the HUD; no input is generated.
-                obs = tracker.process(packet.frame, packet.timestamp) if hud else None
-                out = EngineOutput(Mode.NO_HAND, "PAUSED")
-            else:
-                obs = tracker.process(packet.frame, packet.timestamp)
-                out = engine.update(obs, packet.timestamp)
-                controller.apply(out.actions)
-            stats.update(
-                time.perf_counter(),
-                packet.timestamp,
-                tracker.last_inference_ms,
-                camera.measured_fps,
-                camera.dropped_frames,
-            )
+                controller.apply(engine.reset())
+                controller.release_all()
+            log.info("Paused" if paused else "Resumed")
 
-            if hud is not None:
-                hud.draw(packet.frame, roi, obs, out, stats, paused)
-                cv2.imshow(cfg.hud.window_name, packet.frame)
-                key = cv2.waitKey(1) & 0xFF
-                if key in (ord("q"), 27):  # q or ESC
-                    break
-                if key == ord("p"):
-                    pause_toggle.set()
-                if window.closed():
-                    break
+        if paused:
+            # Keep tracking only to show the hand in the HUD; no input is generated.
+            obs = tracker.process(packet.frame, packet.timestamp) if hud else None
+            out = EngineOutput(Mode.NO_HAND, "PAUSED")
+        else:
+            obs = tracker.process(packet.frame, packet.timestamp)
+            out = engine.update(obs, packet.timestamp)
+            controller.apply(out.actions)
+        stats.update(
+            time.perf_counter(),
+            packet.timestamp,
+            tracker.last_inference_ms,
+            camera.measured_fps,
+            camera.dropped_frames,
+        )
+
+        if hud is not None:
+            hud.draw(packet.frame, roi, obs, out, stats, paused)
+            _show(cfg.hud.window_name, packet.frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):  # q or ESC
+                break
+            if key == ord("p"):
+                s.pause_toggle.set()
+            if window.closed():
+                break
+    return 0
+
+
+def _gaze_calibration(s: _Session, tracker: FaceTracker, force: bool) -> GazeCalibration | None:
+    e = s.cfg.eyes
+    if not force:
+        saved = GazeCalibration.load(e.calibration_path, s.screen)
+        if saved is not None:
+            log.info(
+                "Saved gaze calibration loaded (error ~%.0f px); --recalibrate or 'c' redoes it.",
+                saved.rms_error,
+            )
+            return saved
+    log.info("Gaze calibration: look at each dot until it moves on (about 15 s).")
+    calibration = run_calibration(s.camera, tracker, e, s.screen, s.cfg.camera.mirror)
+    if calibration is None:
+        log.error("No gaze calibration. Try again, or use --eyes-pointer nose.")
+        return None
+    calibration.save(e.calibration_path)
+    return calibration
+
+
+def _face_loop(s: _Session, tracker: FaceTracker) -> int:
+    cfg, camera, controller = s.cfg, s.camera, s.controller
+    mirrored = cfg.camera.mirror
+    calibration: GazeCalibration | None = None
+    engine: EyeEngine | HeadArrows
+    if cfg.input_mode == "eyes":
+        if cfg.eyes.pointer == "gaze":
+            calibration = _gaze_calibration(s, tracker, force=cfg.eyes.recalibrate)
+            if calibration is None:
+                return 1
+        engine = EyeEngine(cfg.eyes, cfg.face, s.screen, cfg.filter, calibration, mirrored)
+    else:
+        engine = HeadArrows(cfg.head, cfg.face, mirrored)
+    error = calibration.rms_error if calibration is not None else None
+    hud = FaceHud(cfg.input_mode, cfg.face, cfg.head, error) if cfg.hud.enabled else None
+    window = _WindowWatch(cfg.hud.window_name)
+    if hud is not None:
+        cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
+    stats = LoopStats()
+    paused = False
+    last_seq = -1
+
+    while not s.stop.is_set():
+        packet = camera.read(after_seq=last_seq, timeout=1.0)
+        if packet is None:
+            if not camera.is_running:
+                log.error("Camera stopped: %s", camera.error or "unknown reason")
+                return 1
+            continue
+        last_seq = packet.seq
+
+        if s.pause_toggle.is_set():
+            s.pause_toggle.clear()
+            paused = not paused
+            if paused:
+                engine.reset()
+                controller.release_all()
+            log.info("Paused" if paused else "Resumed")
+
+        obs = tracker.process(packet.frame, packet.timestamp) if (hud or not paused) else None
+        if paused:
+            out = FaceOutput(FaceMode.PAUSED, "PAUSED")
+        else:
+            out = engine.update(obs, packet.timestamp)
+            controller.apply(out.actions)
+        stats.update(
+            time.perf_counter(),
+            packet.timestamp,
+            tracker.last_inference_ms,
+            camera.measured_fps,
+            camera.dropped_frames,
+        )
+
+        if hud is not None:
+            hud.draw(packet.frame, obs, out, stats, paused)
+            _show(cfg.hud.window_name, packet.frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                break
+            if key == ord("p"):
+                s.pause_toggle.set()
+            if key == ord("c") and isinstance(engine, EyeEngine) and cfg.eyes.pointer == "gaze":
+                new = _gaze_calibration(s, tracker, force=True)
+                if new is not None:
+                    engine.set_calibration(new)
+                    hud.calibration_error = new.rms_error
+            if window.closed():
+                break
     return 0
 
 
@@ -242,6 +431,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         log.error("%s", exc)
         return 2
+    if args.probe_camera:
+        return print_probe(cfg.camera.device_id)
     try:
         return run(cfg)
     except KeyboardInterrupt:
