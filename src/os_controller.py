@@ -16,7 +16,7 @@ import logging
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +61,15 @@ class Zoom:
     steps: int  # + = zoom in (modifier + wheel up), - = zoom out
 
 
-Action = MoveTo | MoveBy | Click | Press | Release | Scroll | Zoom
+@dataclass(frozen=True)
+class KeyTap:
+    """Press and release a key: one of PynputBackend.TAP_KEYS (media keys and arrows)."""
+
+    key: str
+    count: int = 1
+
+
+Action = MoveTo | MoveBy | Click | Press | Release | Scroll | Zoom | KeyTap
 
 
 # -- backends --------------------------------------------------------------------------------
@@ -74,10 +82,23 @@ class InputBackend(Protocol):
     def scroll(self, dx: int, dy: int) -> None: ...
     def key_down(self, key: str) -> None: ...
     def key_up(self, key: str) -> None: ...
+    def tap(self, key: str) -> None: ...
 
 
 class PynputBackend:
     """Real input: SendInput on Windows, Quartz events on macOS, XTest on X11."""
+
+    # KeyTap names -> pynput Key attributes. Media keys act system-wide: they reach the music
+    # player (Spotify, a browser tab, ...) without it having focus.
+    TAP_KEYS: ClassVar[dict[str, str]] = {
+        "play_pause": "media_play_pause",
+        "next_track": "media_next",
+        "previous_track": "media_previous",
+        "volume_up": "media_volume_up",
+        "volume_down": "media_volume_down",
+        "left": "left",
+        "right": "right",
+    }
 
     def __init__(self) -> None:
         from pynput import keyboard, mouse  # lazy: on Linux this needs a running X server
@@ -90,6 +111,7 @@ class PynputBackend:
             "middle": mouse.Button.middle,
         }
         self._keys = {"ctrl": keyboard.Key.ctrl, "cmd": keyboard.Key.cmd}
+        self._taps = {name: getattr(keyboard.Key, attr) for name, attr in self.TAP_KEYS.items()}
 
     def move_to(self, x: int, y: int) -> None:
         self._mouse.position = (x, y)
@@ -114,6 +136,9 @@ class PynputBackend:
 
     def key_up(self, key: str) -> None:
         self._keyboard.release(self._keys[key])
+
+    def tap(self, key: str) -> None:
+        self._keyboard.tap(self._taps[key])
 
 
 class DryRunBackend:
@@ -142,6 +167,9 @@ class DryRunBackend:
 
     def key_up(self, key: str) -> None:
         log.info("[dry-run] key up %s", key)
+
+    def tap(self, key: str) -> None:
+        log.info("[dry-run] tap %s", key)
 
 
 # -- controller ------------------------------------------------------------------------------
@@ -212,6 +240,9 @@ class OSController:
             case Zoom(steps):
                 if steps:
                     self._zoom(steps)
+            case KeyTap(key, count):
+                for _ in range(count):
+                    b.tap(key)
 
     def _zoom(self, steps: int) -> None:
         key = self._zoom_modifier

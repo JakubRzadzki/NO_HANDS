@@ -6,10 +6,12 @@ import pytest
 
 from src.os_controller import (
     Click,
+    KeyTap,
     MoveBy,
     MoveTo,
     OSController,
     Press,
+    PynputBackend,
     Release,
     Scroll,
     Zoom,
@@ -49,6 +51,9 @@ class RecordingBackend:
 
     def key_up(self, key: str) -> None:
         self._record("key_up", key)
+
+    def tap(self, key: str) -> None:
+        self._record("tap", key)
 
 
 def test_actions_are_dispatched_in_order() -> None:
@@ -90,6 +95,21 @@ def test_a_failing_action_does_not_stop_the_following_ones() -> None:
     ctl = OSController(backend)
     ctl.apply([Click("left"), Press("left")])
     assert backend.calls == [("press", "left")]
+
+
+def test_key_tap_is_repeated_count_times() -> None:
+    backend = RecordingBackend()
+    OSController(backend).apply([KeyTap("volume_up", 3), KeyTap("play_pause")])
+    assert backend.calls == [("tap", "volume_up")] * 3 + [("tap", "play_pause")]
+
+
+def test_tap_keys_exist_in_pynput() -> None:
+    # Without a display pynput raises a plain ImportError, which pytest 9 only skips on request.
+    keyboard = pytest.importorskip(
+        "pynput.keyboard", reason="pynput needs a display server", exc_type=ImportError
+    )
+    missing = [attr for attr in PynputBackend.TAP_KEYS.values() if not hasattr(keyboard.Key, attr)]
+    assert missing == []
 
 
 def test_dry_run_never_imports_pynput(monkeypatch: pytest.MonkeyPatch) -> None:
