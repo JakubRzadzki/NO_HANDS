@@ -10,7 +10,14 @@ import numpy.typing as npt
 
 from config import GestureConfig
 from src.gesture_engine import PINCH_FINGERS, EngineOutput, Finger, LeftState, Mode
-from src.hand_tracker import HAND_CONNECTIONS, INDEX_TIP, THUMB_TIP, HandObservation
+from src.hand_tracker import (
+    HAND_CONNECTIONS,
+    INDEX_TIP,
+    MIDDLE_MCP,
+    THUMB_TIP,
+    WRIST,
+    HandObservation,
+)
 from src.pointer import Roi
 
 Color = tuple[int, int, int]  # BGR
@@ -19,6 +26,7 @@ GREEN: Color = (0, 220, 0)
 YELLOW: Color = (0, 255, 255)
 MAGENTA: Color = (255, 0, 255)
 RED: Color = (0, 0, 255)
+ORANGE: Color = (0, 165, 255)
 GRAY: Color = (160, 160, 160)
 WHITE: Color = (255, 255, 255)
 BLACK: Color = (0, 0, 0)
@@ -65,6 +73,10 @@ def state_color(out: EngineOutput, paused: bool) -> Color:
         return YELLOW
     if out.mode is Mode.ZOOM:
         return MAGENTA
+    if out.mode is Mode.MEDIA:
+        return ORANGE
+    if out.mode is Mode.SWITCH:
+        return WHITE
     if out.mode is Mode.NO_HAND:
         return GRAY
     if out.left_state is not LeftState.IDLE or out.label in CLICK_LABELS:
@@ -142,6 +154,8 @@ class Hud:
             cv2.arrowedLine(frame, origin, current, YELLOW, 2, cv2.LINE_AA, tipLength=0.2)
         elif out.mode is Mode.ZOOM:
             cv2.line(frame, _pt(pts[THUMB_TIP]), _pt(pts[INDEX_TIP]), MAGENTA, 3, cv2.LINE_AA)
+        elif out.mode is Mode.MEDIA:  # the "knob needle": its angle drives the volume
+            cv2.line(frame, _pt(pts[WRIST]), _pt(pts[MIDDLE_MCP]), ORANGE, 3, cv2.LINE_AA)
 
     def _draw_panel(
         self, frame: npt.NDArray[np.uint8], out: EngineOutput, stats: LoopStats, paused: bool
@@ -176,9 +190,20 @@ class Hud:
             if out.mode is Mode.SCROLL:
                 rx, ry = out.scroll_rate
                 lines.append((f"scroll rate x {rx:+.1f}  y {ry:+.1f} ticks/s", 0.45, YELLOW))
+            if out.mode is Mode.MEDIA:
+                if out.knob_offset is None:
+                    knob = "knob: hold the hand still to set neutral"
+                else:
+                    knob = f"knob {out.knob_offset:+.0f} deg   volume {out.volume_rate:+.1f}/s"
+                lines.append((knob, 0.45, ORANGE))
             if out.pending_mode is not None:
                 lines.append((f"switching to {out.pending_mode.value}...", 0.45, GRAY))
-        lines.append(("q/ESC quit   p pause   ctrl+alt+p / ctrl+alt+q work globally", 0.4, GRAY))
+        if out.media_active:
+            lines.append(
+                ("MEDIA MODE: swipe = prev/next, turn = volume, fist = play", 0.45, ORANGE)
+            )
+        lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
+        lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
 
         pad, gap = 8, 6
         sizes = [cv2.getTextSize(text, FONT, scale, 1)[0] for text, scale, _ in lines]
