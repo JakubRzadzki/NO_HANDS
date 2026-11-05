@@ -8,7 +8,14 @@ import numpy as np
 import pytest
 
 from config import TrackerConfig
-from src.hand_tracker import HandObservation, HandTracker, ensure_model
+from src.hand_tracker import (
+    ZOOM_IDLE_AFTER,
+    HandObservation,
+    HandTracker,
+    centre_crop,
+    ensure_model,
+    uncrop,
+)
 
 
 def test_pixel_space_is_isotropic() -> None:
@@ -80,3 +87,82 @@ def test_tracker_survives_blank_frames_and_non_increasing_timestamps(tracker: Ha
     assert tracker.process(frame, 10.0) is None
     assert tracker.process(frame, 10.0) is None  # MediaPipe raises on equal timestamps
     assert tracker.process(frame, 9.0) is None  # ... and on going backwards
+
+
+# -- the centre-crop search for far hands -----------------------------------------------------
+def test_centre_crop_and_uncrop_round_trip() -> None:
+    box = centre_crop((1280, 720), 0.6)
+    assert box == (256, 144, 1024, 576)
+    # A point at the crop's centre / corner is the frame's centre / the crop's corner.
+    found = uncrop([(0.5, 0.5, 0.1), (0.0, 1.0, 0.0)], box, (1280, 720))
+    assert found[0] == pytest.approx((0.5, 0.5, 0.06))  # z scales with the width: 0.1 * 0.6
+    assert found[1, :2] == pytest.approx((256 / 1280, 576 / 720))
+
+
+class _Point:
+    def __init__(self, x: float, y: float, z: float = 0.0) -> None:
+        self.x, self.y, self.z = x, y, z
+
+
+class _Result:
+    def __init__(self, hand: bool) -> None:
+        self.hand_landmarks = [[_Point(0.5, 0.5)] * 21] if hand else []
+        self.handedness: list[list[object]] = []
+
+
+class _FakeLandmarker:
+    def __init__(self, finds: bool) -> None:
+        self.finds = finds
+        self.sizes: list[tuple[int, int]] = []
+
+    def detect_for_video(self, image: object, ts_ms: int) -> _Result:
+        self.sizes.append(image.data.shape[1::-1])  # type: ignore[attr-defined]
+        return _Result(self.finds)
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeImage:
+    def __init__(self, image_format: object, data: np.ndarray) -> None:
+        self.data = data
+
+
+class _FakeMp:
+    Image = _FakeImage
+
+    class ImageFormat:
+        SRGB = "srgb"
+
+
+def fake_tracker(main_finds: bool, zoom_finds: bool) -> HandTracker:
+    tracker = HandTracker.__new__(HandTracker)  # skip loading MediaPipe
+    tracker._mp = _FakeMp
+    tracker._landmarker = _FakeLandmarker(main_finds)
+    tracker._zoomed = _FakeLandmarker(zoom_finds)
+    tracker.zoom_crop = 0.6
+    tracker._last_ts_ms, tracker._misses = -1, 0
+    tracker.last_inference_ms, tracker.zoomed = 0.0, False
+    return tracker
+
+
+def test_far_hands_are_searched_for_in_the_centre_crop() -> None:
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    near = fake_tracker(main_finds=True, zoom_finds=True)
+    obs = near.process(frame, 0.0)
+    assert obs is not None and not near.zoomed
+    assert near._zoomed.sizes == []  # found normally: no second search
+    far = fake_tracker(main_finds=False, zoom_finds=True)
+    obs = far.process(frame, 0.0)
+    assert obs is not None and far.zoomed
+    assert far._zoomed.sizes == [(768, 432)]  # the centre 60%
+    assert obs.norm[0, :2] == pytest.approx((0.5, 0.5))  # crop centre = frame centre
+
+
+def test_an_empty_scene_is_searched_less_often() -> None:
+    frame = np.zeros((72, 128, 3), np.uint8)
+    empty = fake_tracker(main_finds=False, zoom_finds=False)
+    for i in range(ZOOM_IDLE_AFTER + 30):
+        assert empty.process(frame, i / 30) is None
+    searches = len(empty._zoomed.sizes)
+    assert searches == ZOOM_IDLE_AFTER + 10  # every frame at first, then every 3rd
