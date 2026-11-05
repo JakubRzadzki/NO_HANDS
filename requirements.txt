@@ -1,0 +1,10 @@
+# Runtime dependencies (tested with Python 3.13; Python 3.10+ supported).
+#
+# Do NOT add opencv-python: mediapipe already depends on opencv-contrib-python, and both
+# packages install the same `cv2` module - having both installed leaves a broken import.
+mediapipe==1.2.2
+opencv-contrib-python==5.0.0.93
+pynput==1.8.2
+# numpy 2.3+ dropped Python 3.10/3.11, so a single exact pin cannot cover 3.10+; pip picks the
+# newest release that matches your interpreter (2.5.4 was used for testing on 3.13).
+numpy>=2.0,<3
