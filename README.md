@@ -1,10 +1,10 @@
 # AI Virtual Mouse
 
-Control the mouse and your music with hand gestures in front of a webcam: MediaPipe (hand
-tracking) → gesture state machine → pynput (injects mouse/keyboard events into the OS). Cursor
-movement, left/right/double click, drag and drop, vertical and horizontal scrolling, zoom
-(Ctrl + wheel) and a clutch; in media mode previous/next track, volume and play/pause. Runs on
-the CPU only.
+Hands-free control in front of a webcam: with hand gestures, with your eyes (`--eyes`) or with
+head movements (`--head`). MediaPipe (hand / face tracking) → gesture state machines → pynput
+(injects mouse/keyboard events into the OS). Hand mode: cursor movement, left/right/double
+click, drag and drop, vertical and horizontal scrolling, zoom (Ctrl + wheel), a clutch, and a
+media mode with previous/next track, volume and play/pause. Runs on the CPU only.
 
 ## Quick start
 
@@ -28,8 +28,12 @@ python main.py --dry-run         # first without mouse control: check the gestur
 python main.py                   # the real run
 ```
 
-The `hand_landmarker.task` model (~8 MB) is downloaded automatically into `models/` on the
-first run.
+```bash
+python main.py --probe-camera    # which resolutions / frame rates does the camera really deliver?
+```
+
+The MediaPipe models (`hand_landmarker.task` ~8 MB, `face_landmarker.task` ~4 MB for `--eyes`
+and `--head`) are downloaded automatically into `models/` on first use.
 
 **Emergency exit:** `Ctrl+Alt+Q` (works system-wide, also when the window has no focus and with
 `--no-hud`), pause with `Ctrl+Alt+P`. In the HUD window: `q`/`ESC` quits, `p` pauses. On every
@@ -77,6 +81,53 @@ Media keys act system-wide: Spotify, YouTube in a browser and other players reac
 having focus. With `MediaConfig.swipe_action = "arrows"` swipes send the Left/Right arrow keys
 instead (slides, photo viewers, seeking in YouTube).
 
+## Eye control (`--eyes`)
+
+A mouse without hands: look where the cursor should go and click with your eyes.
+
+| Action | Eye gesture |
+| --- | --- |
+| Move the cursor | look at the spot (gaze pointer), or point with your nose (`--eyes-pointer nose`) |
+| Left click | a deliberate blink with both eyes, 0.35–1 s |
+| Double click | a second deliberate blink within 1.2 s |
+| Right click | wink with the right eye (≥ 0.3 s) |
+| Scroll mode on / off | wink with the left eye; while on, look above / below the screen centre to scroll |
+| Pause / resume | close both eyes for 1.5 s |
+
+- **Natural blinks** (0.1–0.3 s) are ignored. A gesture counts when the eyes open again, and the
+  cursor stays frozen while they close, so a click lands where you looked.
+- **Calibration:** the first `--eyes` run shows 9 dots full screen; look at each until it moves
+  on (~15 s). It is saved to `models/gaze_calibration.json`. Redo it with `--recalibrate` or `c`
+  in the HUD after moving the laptop, the camera or your chair.
+- **Precision:** a webcam sees each eye as ~50 px, so one pixel of iris noise moves the gaze
+  point by ~100 screen px. A fixation filter keeps the cursor still while you look at
+  something and jumps when your eyes do, but small targets stay hard. Keep your head still and
+  use good light; 1920×1080 helps. For precise work use `--eyes-pointer nose`: the cursor
+  follows your head, the eye gestures still click.
+- **Openness** is relative to each eye's own open size, learned while running, so narrow and wide
+  eyes both work. Looking down lowers the lids to about 0.6–0.75 of open, safely above the 0.4
+  "closed" threshold. The HUD shows both eyes' openness live. `EyeConfig.swap_winks = True`
+  swaps the winks.
+
+## Head control (`--head`)
+
+Head movements press the arrow keys: slides, photo viewers, video players, lists.
+
+| Action | Head movement |
+| --- | --- |
+| Left / Right arrow | turn the head left / right (~15°) |
+| Up / Down arrow | tilt the head up / nod down (~10°) |
+| Repeat | keep the head there: the key repeats after 0.6 s, every 0.25 s |
+| Pause / resume | close both eyes for 1.5 s |
+
+- Each move presses its key once and re-arms only when the head is back near the neutral pose,
+  so returning to the centre never presses the opposite arrow.
+- The neutral pose is learned in the first half second (hold still) and follows slow posture
+  changes. Pause before turning to talk to someone.
+- The pose is the nose tip's offset from the midpoint between the eyes, in eye distances,
+  measured along the eye line: it does not depend on how far you sit, and tilting the head
+  sideways is not a turn.
+
 ## Options
 
 | Flag | Meaning |
@@ -86,7 +137,13 @@ instead (slides, photo viewers, seeking in YouTube).
 | `--sensitivity X` | cursor gain; `1.5` = a third less hand travel for the same cursor travel |
 | `--relative` | relative mode like a real mouse (fist = lift the mouse) |
 | `--dry-run` | recognize gestures without touching the real mouse |
-| `--width/--height/--fps` | requested camera mode (default 1280×720@60; the camera may deliver less) |
+| `--eyes` | eye control (see above) |
+| `--eyes-pointer gaze/nose` | with `--eyes`: the cursor follows the gaze (default) or the nose |
+| `--recalibrate` | with `--eyes`: redo the gaze calibration |
+| `--head` | head movements press the arrow keys |
+| `--width/--height/--fps` | requested camera mode (default 1920×1080@60; the camera may deliver less) |
+| `--probe-camera` | measure which modes the camera really delivers, suggest the best, exit |
+| `--camera-settings` | Windows: open the camera driver's settings (exposure, low-light compensation) |
 | `--screen WxH` | manual screen size when auto-detection fails |
 | `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | as the names say |
 
@@ -111,6 +168,12 @@ camera thread ──newest frame──▶ HandTracker ──HandObservation─�
 | `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping |
 | `src/gesture_engine.py` | hand features, debounced posture classification, hysteresis latches, clicks, scroll, zoom |
 | `src/os_controller.py` | executes actions, tracks held buttons, `release_all()`, screen size |
+| `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
+| `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), head pose |
+| `src/gaze.py` | gaze calibration (quadratic fit, saved as JSON) and the fixation filter |
+| `src/calibration_ui.py` | the full-screen 9-dot calibration |
+| `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, gaze or nose pointer, scroll, pause |
+| `src/head_engine.py` | `--head`: head pose to arrow keys with hysteresis and key repeat |
 | `src/hud.py` | preview: ROI in the state's color, pinch proximity lines, FPS, latency, metrics |
 
 The gesture engine never calls the OS: it returns action objects (`Click`, `Press`, `Scroll`…).
@@ -158,14 +221,29 @@ Measured per frame on one 2.1 GHz Xeon core (a recent laptop Core i7 is faster):
 | cursor jitter at rest (sensor-noise test) | 0.7–1.1 px | 1.2–1.9 px |
 
 - MediaPipe's cost does not depend on the camera resolution (its networks have a fixed input
-  size) and it runs on a single core. A lower resolution saves little time but adds jitter,
-  so 1280×720 stays the default.
+  size) and it runs on a single core. A lower resolution saves little time but adds jitter.
+  The face landmarker takes 4–6 ms per frame while it is tracking a face.
 - The software takes roughly 15–20 ms per frame. A 30 FPS laptop webcam adds up to 33 ms of
   waiting per frame plus its exposure time, so the camera is the real latency bottleneck: a
   60 FPS camera and good lighting help more than any code change (many webcams lower their
   frame rate in dim light to expose longer).
 - On a laptop, plug in or pick a balanced / best-performance power mode; power saving
   throttles the CPU.
+
+### Camera: 1920×1080 at 60 FPS
+
+The app asks for 1920×1080 at 60 FPS, but the camera decides what it delivers. The HUD's `cam`
+value is the measured rate, and the log warns when it is far below the request. Most built-in
+laptop webcams deliver 30 FPS at most, and many give 1920×1080 only at 30 FPS.
+
+- `python main.py --probe-camera` measures the real frame rate of each common mode and
+  suggests the best one, e.g. `--width 1280 --height 720` when that is the only 60 FPS mode.
+- Light matters: in dim light webcams expose longer and drop to 30 or even 15 FPS. On Windows,
+  `--camera-settings` opens the driver's dialog, where low-light compensation or automatic
+  exposure can be switched off.
+- 1920×1080 costs more per frame than 1280×720 (MJPG decoding ~13 ms vs ~4 ms on one 2.1 GHz
+  Xeon core, in the camera thread) but gives the eye tracker 1.5× more pixels per eye. Larger
+  frames are shrunk for the preview window only.
 
 ## Tuning
 
@@ -195,7 +273,8 @@ thresholds from numbers, not by feel.
 - **Detection range:** MediaPipe's palm detector sees the whole frame scaled down to 192 px. A
   hand that is small in the frame (far from the camera, wide-angle lens) will not be detected;
   verified on a sample that was only detected after cropping the image to 80%.
-- Keep one hand in the frame (`num_hands=1`).
+- Keep one hand in the frame (`num_hands=1`). `--eyes` and `--head` track one face, which
+  must be reasonably large in the frame (sit within about 1 m of the camera).
 
 ## Tests
 
