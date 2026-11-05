@@ -50,6 +50,7 @@ VICTORY: dict[str, Any] = {  # same fingers as SCROLL but spread apart -> plain 
     "spread": {"index": 10.0, "middle": -8.0},
     "thumb": "tucked",
 }
+SHAKA: dict[str, Any] = {"curl": {"index": 1.0, "middle": 1.0, "ring": 1.0}}  # thumb + pinky out
 
 
 def pinch(finger: str, ratio: float = 0.05) -> dict[str, Any]:
@@ -115,18 +116,21 @@ def project(
     palm_px: float = 150.0,
     roll_deg: float = 0.0,
     frame: tuple[int, int] = (1280, 720),
+    pivot: str = "anchor",
 ) -> FloatArray:
     """Model space -> MediaPipe normalized coordinates.
 
-    ``center`` is where the cursor anchor (midpoint of landmarks 5 and 9) lands in the frame,
-    ``palm_px`` the palm length in pixels (hand distance), ``roll_deg`` an in-plane rotation.
+    ``center`` is where the pivot lands in the frame: the cursor anchor (midpoint of landmarks
+    5 and 9) by default, or the wrist with ``pivot="wrist"`` (a hand turned like a knob rotates
+    around the wrist). ``palm_px`` is the palm length in pixels (hand distance) and
+    ``roll_deg`` an in-plane rotation, counter-clockwise on screen.
     """
     width, height = frame
     k = palm_px / PALM_M  # px per metre
     r = math.radians(roll_deg)
     rotation = np.array([[math.cos(r), -math.sin(r)], [math.sin(r), math.cos(r)]])
     xy = points[:, :2] @ rotation.T
-    anchor = (xy[5] + xy[9]) / 2
+    anchor = xy[0] if pivot == "wrist" else (xy[5] + xy[9]) / 2
     px_x = center[0] * width + (xy[:, 0] - anchor[0]) * k
     px_y = center[1] * height - (xy[:, 1] - anchor[1]) * k  # image y grows downwards
     z = (points[:, 2] - points[0, 2]) * k
@@ -140,10 +144,16 @@ def make_obs(
     palm_px: float = 150.0,
     roll_deg: float = 0.0,
     frame: tuple[int, int] = (1280, 720),
+    pivot: str = "anchor",
     **pose: Any,
 ) -> HandObservation:
     norm = project(
-        hand_points(**pose), center=center, palm_px=palm_px, roll_deg=roll_deg, frame=frame
+        hand_points(**pose),
+        center=center,
+        palm_px=palm_px,
+        roll_deg=roll_deg,
+        frame=frame,
+        pivot=pivot,
     )
     return HandObservation.from_normalized(norm, frame, t)
 
@@ -153,18 +163,20 @@ def make_engine(
     mode: str = "absolute",
     screen: tuple[int, int] = (1920, 1080),
     frame: tuple[int, int] = (1280, 720),
+    media: dict[str, Any] | None = None,
     **gesture_overrides: Any,
 ) -> GestureEngine:
     cfg = AppConfig()
-    for name, value in gesture_overrides.items():
-        if not hasattr(cfg.gesture, name):
-            raise AttributeError(name)
-        setattr(cfg.gesture, name, value)
+    for section, overrides in ((cfg.gesture, gesture_overrides), (cfg.media, media or {})):
+        for name, value in overrides.items():
+            if not hasattr(section, name):
+                raise AttributeError(name)
+            setattr(section, name, value)
     cfg.validate()
     p = cfg.pointer
     roi = Roi.for_screen(frame, screen, p.roi_width, p.roi_center, p.sensitivity)
     mapper = CursorMapper(roi, screen, cfg.filter, mode, p.edge_overshoot, p.relative_gain)
-    return GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight)
+    return GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
 
 
 class Driver:
