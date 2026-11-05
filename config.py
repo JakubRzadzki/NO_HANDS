@@ -18,12 +18,18 @@ MODEL_URL = (
 @dataclass
 class CameraConfig:
     device_id: int = 0
-    width: int = 1280
-    height: int = 720
+    # Full HD: more pixels per eye matters for --eyes. Whether 60 FPS is reachable at this size
+    # depends on the camera: many laptop webcams give 1080p (or everything) at 30 FPS only.
+    # `python main.py --probe-camera` measures what yours really delivers.
+    width: int = 1920
+    height: int = 1080
     fps: int = 60
     mirror: bool = True  # selfie view: hand moves right -> cursor moves right
-    use_mjpg: bool = True  # most USB webcams need MJPG for 720p@60 (raw YUYV saturates USB 2.0)
+    use_mjpg: bool = (
+        True  # USB webcams need MJPG for 1080p/720p at speed (raw YUYV saturates USB 2)
+    )
     buffer_size: int = 1  # minimal driver-side queue = lower latency (some backends ignore it)
+    open_settings: bool = False  # Windows: open the driver's settings dialog (exposure, ...)
 
 
 @dataclass

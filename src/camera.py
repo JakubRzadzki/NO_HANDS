@@ -45,6 +45,25 @@ class FramePacket:
     seq: int  # strictly increasing frame number
 
 
+def configure_capture(cap: CaptureLike, cfg: CameraConfig) -> None:
+    """Ask for the configured format. Drivers may silently grant something else."""
+    # Order matters: some backends reset the pixel format when the resolution changes.
+    if cfg.use_mjpg:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
+    cap.set(cv2.CAP_PROP_FPS, cfg.fps)
+    if cfg.buffer_size > 0:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, cfg.buffer_size)
+    if cfg.open_settings and not cap.set(cv2.CAP_PROP_SETTINGS, 1):
+        log.warning("This camera backend has no settings dialog (it is a Windows/DirectShow one).")
+
+
+def fourcc_name(value: float) -> str:
+    code = int(value)
+    return code.to_bytes(4, "little").decode("ascii", "replace") if code > 0 else "?"
+
+
 def open_capture(cfg: CameraConfig) -> CaptureLike:
     """Open the webcam with the best backend for the platform."""
     if sys.platform == "win32":
@@ -63,8 +82,10 @@ class ThreadedCamera:
         cfg: CameraConfig,
         capture_factory: Callable[[CameraConfig], CaptureLike] = open_capture,
         stall_timeout: float = 2.0,
+        fps_check_frames: int = 90,
     ) -> None:
         self._cfg = cfg
+        self._fps_check_frames = fps_check_frames
         self._factory = capture_factory
         self._stall_timeout = stall_timeout
         self._cap: CaptureLike | None = None
@@ -83,7 +104,7 @@ class ThreadedCamera:
         cap = self._factory(self._cfg)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open camera {self._cfg.device_id}")
-        self._configure(cap)
+        configure_capture(cap, self._cfg)
         # Read one frame synchronously: the driver may not grant the requested resolution, and
         # everything downstream (ROI, HUD) must use the size we really get.
         ok, frame = cap.read()
@@ -148,17 +169,6 @@ class ThreadedCamera:
             return self._packet
 
     # -- producer side -----------------------------------------------------------------------
-    def _configure(self, cap: CaptureLike) -> None:
-        c = self._cfg
-        # Order matters: some backends reset the pixel format when the resolution changes.
-        if c.use_mjpg:
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, c.width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, c.height)
-        cap.set(cv2.CAP_PROP_FPS, c.fps)
-        if c.buffer_size > 0:
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, c.buffer_size)
-
     def _publish(self, raw: npt.NDArray[np.uint8], timestamp: float) -> None:
         # flip() returns a new array, so the consumer may draw on its frame freely.
         frame: npt.NDArray[Any] = cv2.flip(raw, 1) if self._cfg.mirror else raw
@@ -178,6 +188,23 @@ class ThreadedCamera:
             seq = 0 if previous is None else previous.seq + 1
             self._packet = FramePacket(frame, timestamp, seq)
             self._cond.notify_all()
+        if seq == self._fps_check_frames:
+            self._check_fps()
+
+    def _check_fps(self) -> None:
+        """Say so when the camera is much slower than asked: it is the usual "why 30 FPS?"."""
+        c = self._cfg
+        if self.measured_fps < 0.8 * c.fps:
+            width, height = self.frame_size
+            log.warning(
+                "Camera delivers %.0f FPS at %dx%d (asked for %d). The camera, its driver or dim "
+                "light (longer exposure) is the limit. See what it can do: python main.py "
+                "--probe-camera",
+                self.measured_fps,
+                width,
+                height,
+                c.fps,
+            )
 
     def _run(self) -> None:
         cap = self._cap
@@ -198,3 +225,58 @@ class ThreadedCamera:
             self._publish(frame, now)
         with self._cond:
             self._cond.notify_all()  # wake a waiting consumer so it notices we stopped
+
+
+# -- probing ---------------------------------------------------------------------------------
+PROBE_MODES: tuple[tuple[int, int, int], ...] = (
+    (1920, 1080, 60),
+    (1920, 1080, 30),
+    (1280, 720, 60),
+    (1280, 720, 30),
+    (640, 480, 60),
+    (640, 480, 30),
+)
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    requested: tuple[int, int, int]  # width, height, fps
+    size: tuple[int, int] | None  # what the camera really delivered (None: did not open)
+    fps: float  # measured, not what the driver claims
+    fourcc: str
+
+
+def probe_camera(
+    device_id: int,
+    modes: tuple[tuple[int, int, int], ...] = PROBE_MODES,
+    frames: int = 40,
+    capture_factory: Callable[[CameraConfig], CaptureLike] = open_capture,
+) -> list[ProbeResult]:
+    """Try each mode and *measure* the frame rate. Drivers often accept a request and then
+    deliver something else, and CAP_PROP_FPS reports the request, not the reality."""
+    results = []
+    for width, height, fps in modes:
+        cfg = CameraConfig(device_id=device_id, width=width, height=height, fps=fps, mirror=False)
+        cap = capture_factory(cfg)
+        try:
+            if not cap.isOpened():
+                results.append(ProbeResult((width, height, fps), None, 0.0, "?"))
+                continue
+            configure_capture(cap, cfg)
+            for _ in range(5):  # the first frames are often slow while the sensor settles
+                cap.read()
+            size: tuple[int, int] | None = None
+            delivered = 0
+            started = time.perf_counter()
+            for _ in range(frames):
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    delivered += 1
+                    size = (int(frame.shape[1]), int(frame.shape[0]))
+            elapsed = time.perf_counter() - started
+            measured = delivered / elapsed if elapsed > 0 else 0.0
+            fourcc = fourcc_name(cap.get(cv2.CAP_PROP_FOURCC))
+            results.append(ProbeResult((width, height, fps), size, measured, fourcc))
+        finally:
+            cap.release()
+    return results

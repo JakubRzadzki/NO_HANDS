@@ -2,20 +2,24 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 
 import numpy as np
 import pytest
 
 from config import CameraConfig
-from src.camera import ThreadedCamera
+from src.camera import ThreadedCamera, fourcc_name, probe_camera
 
 
 class FakeCapture:
     """Frames whose left half is dark and right half bright, numbered in pixel (0, 0)."""
 
-    def __init__(self, opened: bool = True, fail_after: int | None = None) -> None:
+    def __init__(
+        self, opened: bool = True, fail_after: int | None = None, frame_time: float = 0.002
+    ) -> None:
         self.opened = opened
         self.fail_after = fail_after
+        self.frame_time = frame_time
         self.count = 0
         self.released = threading.Event()
         self.props: dict[int, float] = {}
@@ -24,7 +28,7 @@ class FakeCapture:
         return self.opened
 
     def read(self) -> tuple[bool, np.ndarray | None]:
-        time.sleep(0.002)
+        time.sleep(self.frame_time)
         self.count += 1
         if self.fail_after is not None and self.count > self.fail_after:
             return False, None
@@ -44,7 +48,7 @@ class FakeCapture:
         self.released.set()
 
 
-def make_camera(fake: FakeCapture, mirror: bool = False, **kwargs: float) -> ThreadedCamera:
+def make_camera(fake: FakeCapture, mirror: bool = False, **kwargs: Any) -> ThreadedCamera:
     cfg = CameraConfig(mirror=mirror)
     return ThreadedCamera(cfg, capture_factory=lambda _cfg: fake, **kwargs)
 
@@ -98,3 +102,37 @@ def test_stalled_camera_reports_error() -> None:
 def test_unopenable_camera_raises() -> None:
     with pytest.raises(RuntimeError, match="Cannot open camera"):
         make_camera(FakeCapture(opened=False)).start()
+
+
+def test_a_camera_slower_than_requested_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    fake = FakeCapture(frame_time=1 / 25)  # a 25 FPS camera, asked for 60
+    with caplog.at_level("WARNING"), make_camera(fake, fps_check_frames=8) as cam:
+        cam.read(after_seq=9, timeout=2.0)
+    assert "Camera delivers" in caplog.text and "--probe-camera" in caplog.text
+
+
+def test_probe_measures_what_each_mode_really_delivers() -> None:
+    fakes: list[FakeCapture] = []
+
+    def factory(cfg: CameraConfig) -> FakeCapture:
+        fakes.append(FakeCapture(frame_time=1 / 100))
+        return fakes[-1]
+
+    modes = ((1920, 1080, 60), (640, 480, 30))
+    results = probe_camera(0, modes=modes, frames=10, capture_factory=factory)
+    assert [r.requested for r in results] == list(modes)
+    assert all(r.size == (64, 48) for r in results)  # what the camera gave, not what we asked
+    assert all(50 < r.fps < 120 for r in results)  # measured: ~100 FPS fake camera
+    assert all(f.released.is_set() for f in fakes)
+
+
+def test_probe_reports_a_camera_that_does_not_open() -> None:
+    results = probe_camera(
+        0, modes=((640, 480, 30),), capture_factory=lambda cfg: FakeCapture(opened=False)
+    )
+    assert results[0].size is None and results[0].fps == 0.0
+
+
+def test_fourcc_name() -> None:
+    assert fourcc_name(float(int.from_bytes(b"MJPG", "little"))) == "MJPG"
+    assert fourcc_name(0.0) == "?"
