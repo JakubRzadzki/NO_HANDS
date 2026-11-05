@@ -1,10 +1,11 @@
 # AI Virtual Mouse
 
-Sterowanie myszą gestami dłoni z kamery: MediaPipe (śledzenie dłoni) → maszyna stanów gestów →
-pynput (wstrzykiwanie zdarzeń myszy/klawiatury do systemu). Ruch, lewy/prawy/podwójny klik,
-przeciąganie, scroll w pionie i poziomie, zoom (Ctrl + kółko), sprzęgło.
+Control the mouse with hand gestures in front of a webcam: MediaPipe (hand tracking) → gesture
+state machine → pynput (injects mouse/keyboard events into the OS). Cursor movement,
+left/right/double click, drag and drop, vertical and horizontal scrolling, zoom (Ctrl + wheel)
+and a clutch.
 
-## Szybki start
+## Quick start
 
 ```bash
 python -m venv .venv
@@ -19,136 +20,136 @@ pip install -r requirements.txt
 ```
 
 ```bash
-python main.py --dry-run         # najpierw bez sterowania myszą: sprawdź gesty w oknie HUD
+python main.py --dry-run         # first without mouse control: check the gestures in the HUD
 ```
 
 ```bash
-python main.py                   # właściwe uruchomienie
+python main.py                   # the real run
 ```
 
-Model `hand_landmarker.task` (~8 MB) pobiera się automatycznie przy pierwszym uruchomieniu do
-`models/`.
+The `hand_landmarker.task` model (~8 MB) is downloaded automatically into `models/` on the
+first run.
 
-**Wyjście awaryjne:** `Ctrl+Alt+Q` (działa globalnie, także bez fokusu na oknie i z `--no-hud`),
-pauza `Ctrl+Alt+P`. W oknie HUD: `q`/`ESC` wyjście, `p` pauza. Przy każdym wyjściu, także po
-`Ctrl+C` i po błędzie, wszystkie wciśnięte przyciski i klawisze są zwalniane.
+**Emergency exit:** `Ctrl+Alt+Q` (works system-wide, also when the window has no focus and with
+`--no-hud`), pause with `Ctrl+Alt+P`. In the HUD window: `q`/`ESC` quits, `p` pauses. On every
+exit, including `Ctrl+C` and crashes, all held mouse buttons and keys are released.
 
-## Gesty
+## Gestures
 
-| Akcja | Gest | Zabezpieczenie |
+| Action | Gesture | Safeguard |
 | --- | --- | --- |
-| Ruch kursora | otwarta dłoń | kotwica na kłykciach (LM 5+9), nie na czubku palca; filtr 1€ |
-| Lewy klik | krótkie zbliżenie **kciuk + wskazujący** (< 0,25 s) | kursor zamrożony już przy zbliżaniu palców, więc klik trafia tam, gdzie celowałeś |
-| Przeciąganie | przytrzymanie **kciuk + wskazujący** (> 0,25 s) albo ruch > 40 px przy złączonych palcach | rozłączenie palców = upuszczenie; krótka utrata dłoni (< 0,2 s) nie przerywa przeciągania |
-| Prawy klik | **kciuk + środkowy** | jeden klik na jedno zbliżenie + cooldown 0,4 s |
-| Podwójny klik | **kciuk + serdeczny** (albo dwa szybkie lewe kliki) | cooldown 0,5 s |
-| Scroll | **wskazujący + środkowy** wyprostowane i złączone, serdeczny + mały zgięte; przesuń dłoń w górę/dół/bok | działa jak joystick: odległość od punktu startu ustala *prędkość*; strefa martwa |
-| Zoom | „rogi”: **wskazujący + mały** w górze, środkowy + serdeczny zgięte; rozsuwaj/zsuwaj kciuk i wskazujący | Ctrl + kółko, skokowo (zakres 0,12 dłoni na jeden ząbek) |
-| Sprzęgło | **pięść** | `absolute`: pauza wyjścia; `--relative`: „podniesienie myszy” |
+| Move cursor | open hand | anchored on the knuckles (LM 5+9), not a fingertip; 1€ filter |
+| Left click | quick **thumb + index** pinch (< 0.25 s) | the cursor freezes while the fingers approach, so the click lands where you aimed |
+| Drag | hold **thumb + index** (> 0.25 s), or move > 40 px while pinched | separating the fingers drops; a short tracking loss (< 0.2 s) does not break the drag |
+| Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
+| Double click | **thumb + ring** (or two quick left clicks) | 0.5 s cooldown |
+| Scroll | **index + middle** extended and together, ring + pinky curled; move the hand up/down/sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone |
+| Zoom | "horns": **index + pinky** up, middle + ring curled; spread/close thumb and index | Ctrl + wheel in steps (0.12 palm lengths of spread per wheel tick) |
+| Clutch | **fist** | `absolute`: pauses output; `--relative`: "lifts the mouse" |
 
-Szczypnięcia rób jak gest „OK” (pozostałe palce wyprostowane). Szczypnięcie z zaciśniętymi
-pozostałymi palcami wygląda dla systemu jak pięść.
+Pinch like an "OK" sign (other fingers extended). A pinch with the other fingers clenched looks
+like a fist to the system.
 
-Każdy pinch jest „uzbrajany” dopiero, gdy palce były rozwarte. Dzięki temu wyjście z zoomu ze
-złączonymi palcami albo dłoń, która wraca do kadru w trakcie szczypania, nie wywołują
-przypadkowego kliknięcia.
+Every pinch is "armed" only after its fingers were seen apart. That is why leaving zoom with the
+fingers together, or a hand coming back into view mid-pinch, does not trigger an accidental
+click.
 
-## Opcje
+## Options
 
-| Flaga | Znaczenie |
+| Flag | Meaning |
 | --- | --- |
-| `--camera-id N` | numer kamery (domyślnie 0) |
-| `--no-hud` | bez okna podglądu (mniej CPU) |
-| `--sensitivity X` | wzmocnienie kursora; `1.5` = o 1/3 mniejszy ruch ręki na ten sam ruch kursora |
-| `--relative` | tryb względny jak prawdziwa mysz (pięść = podniesienie myszy) |
-| `--dry-run` | rozpoznawanie gestów bez dotykania prawdziwej myszy |
-| `--width/--height/--fps` | żądany tryb kamery (domyślnie 1280×720@60, kamera może dać mniej) |
-| `--screen WxH` | ręczny rozmiar ekranu, gdy autodetekcja zawiedzie |
-| `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | jak w nazwie |
+| `--camera-id N` | camera index (default 0) |
+| `--no-hud` | no preview window (less CPU) |
+| `--sensitivity X` | cursor gain; `1.5` = a third less hand travel for the same cursor travel |
+| `--relative` | relative mode like a real mouse (fist = lift the mouse) |
+| `--dry-run` | recognize gestures without touching the real mouse |
+| `--width/--height/--fps` | requested camera mode (default 1280×720@60; the camera may deliver less) |
+| `--screen WxH` | manual screen size when auto-detection fails |
+| `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | as the names say |
 
-Pozostałe parametry (progi, filtr, ROI, prędkość scrolla) są w `config.py`.
+The remaining parameters (thresholds, filter, ROI, scroll speed) live in `config.py`.
 
-## Architektura
+## Architecture
 
 ```text
-wątek kamery ──najnowsza klatka──▶ HandTracker ──HandObservation──▶ GestureEngine ──akcje──▶ OSController
-(src/camera.py)                   (MediaPipe)                       │   (maszyna stanów)        (pynput)
-                                                                    ▼
-                                                              CursorMapper
-                                                      (ROI → nadmiar krawędzi → filtr 1€)
+camera thread ──newest frame──▶ HandTracker ──HandObservation──▶ GestureEngine ──actions──▶ OSController
+(src/camera.py)                 (MediaPipe)                      │  (state machine)         (pynput)
+                                                                 ▼
+                                                           CursorMapper
+                                                (ROI → edge overshoot → 1€ filter)
 ```
 
-| Plik | Odpowiedzialność |
+| File | Responsibility |
 | --- | --- |
-| `config.py` | wszystkie parametry jako dataclassy + walidacja spójności (np. `pinch_enter < pinch_exit`) |
-| `src/camera.py` | wątek, który ciągle opróżnia kamerę i trzyma tylko najnowszą klatkę |
-| `src/hand_tracker.py` | MediaPipe Tasks API (`HandLandmarker`, tryb VIDEO), punkty w izotropowej przestrzeni pikseli |
-| `src/smoother.py` | filtr 1€ dla wektorów (jedna wspólna częstotliwość odcięcia dla x i y) |
-| `src/pointer.py` | aktywny obszar (ROI) dopasowany do proporcji ekranu, mapowanie absolute/relative |
-| `src/gesture_engine.py` | cechy dłoni, klasyfikacja postawy z debouncingiem, zatrzaski z histerezą, kliknięcia, scroll, zoom |
-| `src/os_controller.py` | wykonywanie akcji, śledzenie wciśniętych przycisków, `release_all()`, rozmiar ekranu |
-| `src/hud.py` | podgląd: ROI w kolorze stanu, linie bliskości szczypnięć, FPS, opóźnienie, metryki |
+| `config.py` | all parameters as dataclasses + consistency validation (e.g. `pinch_enter < pinch_exit`) |
+| `src/camera.py` | a thread that keeps draining the camera and holds only the newest frame |
+| `src/hand_tracker.py` | MediaPipe Tasks API (`HandLandmarker`, VIDEO mode), landmarks in isotropic pixel space |
+| `src/smoother.py` | 1€ filter for vectors (one shared cutoff frequency for x and y) |
+| `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping |
+| `src/gesture_engine.py` | hand features, debounced posture classification, hysteresis latches, clicks, scroll, zoom |
+| `src/os_controller.py` | executes actions, tracks held buttons, `release_all()`, screen size |
+| `src/hud.py` | preview: ROI in the state's color, pinch proximity lines, FPS, latency, metrics |
 
-Silnik gestów nie wywołuje systemu: zwraca obiekty akcji (`Click`, `Press`, `Scroll`…). Dzięki
-temu cała maszyna stanów jest testowana na syntetycznych dłoniach (`tests/handgen.py`) bez
-kamery i bez ekranu.
+The gesture engine never calls the OS: it returns action objects (`Click`, `Press`, `Scroll`…).
+That is why the whole state machine is tested on synthetic hands (`tests/handgen.py`), with no
+camera and no display.
 
-## Decyzje inżynierskie
+## Engineering decisions
 
-- **Jedna przestrzeń miar.** Odległości liczone są w pikselach `(x·W, y·H, z·W)`, a nie na
-  znormalizowanych współrzędnych. Przy kadrze 16:9 jednostka x to 1280 px, a jednostka y tylko
-  720 px, więc `hypot` na surowych wartościach zmienia się, gdy dłoń się obraca. Dopiero potem
-  wszystko jest dzielone przez długość dłoni (LM 0 → LM 9).
-- **Wyprostowanie palca:** `dist(nadgarstek, czubek) / dist(nadgarstek, PIP)`. Na prawdziwych
-  danych MediaPipe wyprostowane palce dają ≥ 1,28, zgięte ≤ 0,86, niezależnie od obrotu dłoni.
-  Popularny test `tip.y < pip.y` przestaje działać, gdy dłoń przechyli się na bok.
-- **Arbitraż szczypnięć:** pinch może zacząć tylko palec wyraźnie najbliższy kciukowi. Przy
-  kciuku na wskazującym czubek środkowego też jest blisko; bez tej reguły jedno szczypnięcie
-  potrafi wywołać lewy i prawy klik naraz.
-- **Filtr 1€ w pikselach ekranu**, `beta` zależy od jednostek. Symulacja przy szumie 2–4 px:
-  `beta=0.05` daje ~15 px maksymalnego opóźnienia przy szybkim ruchu i ~1 px drgań w spoczynku;
-  `beta=0.01` daje 3× większe opóźnienie przy tylko o połowę mniejszych drganiach.
-- **Krawędzie ekranu:** ROI jest przycinane *przed* filtrem (wyjście ręką poza ramkę nie
-  zostawia zaległości do „odkręcenia”), a krawędź ROI wypada 3% *za* krawędzią ekranu. Bez tego
-  filtr wykładniczy zbliża się do ostatniego piksela asymptotycznie i narożniki (przycisk
-  zamknięcia, menu Start) są trudne do trafienia.
-- **ROI w proporcjach ekranu:** wysokość ramki wynika z szerokości tak, żeby wzmocnienie w osi x
-  i y było takie samo (ramka 0,6×0,6 z kamery 4:3 na ekranie 16:9 dałaby o 33% czulszy ruch w
-  poziomie).
-- **Scroll i zoom zależne od czasu, nie od liczby klatek:** prędkość × dt z akumulatorem
-  ułamków. Scroll „N ząbków na klatkę” jest dwa razy szybszy przy 60 FPS niż przy 30 FPS.
+- **One measurement space.** Distances are computed in pixels `(x·W, y·H, z·W)`, not on
+  normalized coordinates. In a 16:9 frame one unit of x is 1280 px but one unit of y only 720 px,
+  so `hypot` on the raw values changes when the hand rotates. Only then is everything divided by
+  the palm length (LM 0 → LM 9).
+- **Finger extension:** `dist(wrist, tip) / dist(wrist, PIP)`. On real MediaPipe output,
+  straight fingers give ≥ 1.28 and curled ones ≤ 0.86, regardless of how the hand is rotated.
+  The popular `tip.y < pip.y` test stops working as soon as the hand tilts sideways.
+- **Pinch arbitration:** only the finger clearly closest to the thumb may start a pinch. With
+  the thumb on the index finger, the middle fingertip is close too; without this rule a single
+  pinch can fire a left *and* a right click.
+- **1€ filter in screen pixels**, and `beta` depends on the units. Simulation with 2–4 px of
+  noise: `beta=0.05` gives ~15 px maximum lag in fast movement and ~1 px jitter at rest;
+  `beta=0.01` gives 3× more lag for only half the jitter.
+- **Screen edges:** positions are clamped to the ROI *before* filtering (moving the hand past
+  the box leaves no backlog to "unwind"), and the ROI edge maps 3% *beyond* the screen edge.
+  Without that, an exponential filter approaches the last pixel asymptotically and corners
+  (close button, Start menu) are hard to hit.
+- **ROI in screen proportions:** the box height follows from its width so that the x and y gain
+  are equal (a 0.6×0.6 box from a 4:3 camera on a 16:9 screen would make horizontal movement 33%
+  more sensitive).
+- **Scroll and zoom depend on time, not on frame count:** rate × dt with a fractional
+  accumulator. Scrolling "N ticks per frame" is twice as fast at 60 FPS as at 30 FPS.
 
-## Strojenie
+## Tuning
 
-Uruchom z HUD-em: panel pokazuje na żywo odległości szczypnięć i stosunki wyprostowania palców,
-więc progi ustawiasz na podstawie liczb, a nie na wyczucie.
+Run with the HUD: the panel shows live pinch distances and finger-extension ratios, so you set
+thresholds from numbers, not by feel.
 
-| Objaw | Parametr w `config.py` |
+| Symptom | Parameter in `config.py` |
 | --- | --- |
-| kursor drży, gdy dłoń stoi | `FilterConfig.min_cutoff` ↓ (np. 0,6) |
-| kursor nie nadąża przy szybkim ruchu | `FilterConfig.beta` ↑ |
-| trzeba wyciągać rękę | `--sensitivity 1.3` albo `PointerConfig.roi_width` ↓ |
-| klik nie wchodzi | `GestureConfig.pinch_enter` ↑ (np. 0,26); sprawdź wartość „pinch I” w HUD |
-| przypadkowe kliki | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
-| kursor „staje”, gdy kciuk jest luźno przy palcu | `approach_freeze` ↓ (0 wyłącza zamrażanie) |
-| scroll za szybki / za wolny | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
+| cursor jitters while the hand is still | `FilterConfig.min_cutoff` ↓ (e.g. 0.6) |
+| cursor lags behind fast movement | `FilterConfig.beta` ↑ |
+| you have to stretch your arm | `--sensitivity 1.3` or `PointerConfig.roi_width` ↓ |
+| clicks do not register | `GestureConfig.pinch_enter` ↑ (e.g. 0.26); check the "pinch I" value in the HUD |
+| accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
+| cursor "stops" when the thumb rests loosely near a finger | `approach_freeze` ↓ (0 disables freezing) |
+| scroll too fast / too slow | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
 
-## Ograniczenia
+## Limitations
 
-- **Linux:** tylko sesja X11; pynput nie wstrzykuje zdarzeń pod Waylandem. MediaPipe ładuje
-  `libEGL.so.1`, więc na minimalnych systemach potrzebny jest pakiet `libegl1`.
-- **macOS:** terminal potrzebuje uprawnień Dostępność (sterowanie) i Monitorowanie wejścia
-  (globalne skróty). Ctrl + kółko w większości aplikacji macOS nie powiększa treści; modyfikator
-  zmienisz w `OutputConfig.zoom_modifier` (`"cmd"`). MediaPipe 1.2.2 nie ma wheeli dla Maców z
-  procesorem Intel.
-- **Wiele monitorów:** Windows i macOS mapują na monitor główny, X11 na cały wirtualny pulpit.
-  Inny obszar ustawisz przez `--screen`.
-- **Zasięg wykrywania:** detektor dłoni MediaPipe widzi cały kadr przeskalowany do 192 px. Dłoń,
-  która w kadrze jest mała (daleko od kamery, szeroki obiektyw), nie zostanie wykryta;
-  sprawdzone na próbce, która zaczęła być wykrywana dopiero po wykadrowaniu 80% obrazu.
-- Trzymaj w kadrze jedną dłoń (`num_hands=1`).
+- **Linux:** X11 sessions only; pynput cannot inject events under Wayland. MediaPipe loads
+  `libEGL.so.1`, so minimal systems need the `libegl1` package.
+- **macOS:** the terminal needs the Accessibility (control) and Input Monitoring (global
+  hotkeys) permissions. Ctrl + wheel does not zoom content in most macOS apps; change the
+  modifier in `OutputConfig.zoom_modifier` (`"cmd"`). MediaPipe 1.2.2 has no wheels for Intel
+  Macs.
+- **Multiple monitors:** Windows and macOS map onto the primary monitor, X11 onto the whole
+  virtual desktop. Set a different area with `--screen`.
+- **Detection range:** MediaPipe's palm detector sees the whole frame scaled down to 192 px. A
+  hand that is small in the frame (far from the camera, wide-angle lens) will not be detected;
+  verified on a sample that was only detected after cropping the image to 80%.
+- Keep one hand in the frame (`num_hands=1`).
 
-## Testy
+## Tests
 
 ```bash
 pip install -r requirements-dev.txt
@@ -158,5 +159,5 @@ pip install -r requirements-dev.txt
 pytest && ruff check . && ruff format --check . && mypy .
 ```
 
-Testy nie potrzebują kamery ani ekranu. Test `HandTracker` na prawdziwym MediaPipe uruchamia się
-tylko wtedy, gdy model jest już w `models/`.
+The tests need no camera and no display. The `HandTracker` test against real MediaPipe runs only
+when the model is already in `models/`.
