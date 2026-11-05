@@ -17,7 +17,7 @@ FACE_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
     "face_landmarker/float16/latest/face_landmarker.task"
 )
-INPUT_MODES = ("hands", "eyes", "head")
+INPUT_MODES = ("hands", "slides", "eyes", "head")
 
 
 @dataclass
@@ -136,6 +136,25 @@ class MediaConfig:
 
 
 @dataclass
+class SlidesConfig:
+    """--slides: quick hand strokes control a presentation (src/slide_gestures.py).
+
+    left / right = Left / Right arrow, up / down = zoom in / out. Distances in palm lengths
+    (wrist -> middle knuckle, ~9 cm), speeds in palm lengths per second."""
+
+    swipe_distance: float = 1.0  # the wrist travels at least this far sideways
+    zoom_distance: float = 1.0  # ... or up / down
+    axis_ratio: float = 1.7  # the main axis must be this much longer than the other (~30 deg)
+    move_speed: float = 2.0  # faster than this starts a stroke
+    rest_speed: float = 0.8  # slower than this for rest_time = the hand rests
+    rest_time: float = 0.12  # s
+    max_stroke: float = 0.6  # s: slower strokes are repositioning, not swipes
+    min_fingers: int = 3  # extended fingers for an "open hand"; a moving fist never swipes
+    return_window: float = 0.8  # s: an opposite stroke this soon after a swipe is the way back
+    zoom_steps: int = 2  # Ctrl + wheel ticks per zoom stroke
+
+
+@dataclass
 class FaceConfig:
     """Face tracking shared by --eyes and --head.
 
@@ -233,13 +252,14 @@ class HotkeyConfig:
 
 @dataclass
 class AppConfig:
-    input_mode: str = "hands"  # "hands", "eyes" (--eyes) or "head" (--head)
+    input_mode: str = "hands"  # "hands", "slides" (--slides), "eyes" (--eyes) or "head" (--head)
     camera: CameraConfig = field(default_factory=CameraConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
     pointer: PointerConfig = field(default_factory=PointerConfig)
     gesture: GestureConfig = field(default_factory=GestureConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
+    slides: SlidesConfig = field(default_factory=SlidesConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
     eyes: EyeConfig = field(default_factory=EyeConfig)
     head: HeadConfig = field(default_factory=HeadConfig)
@@ -283,11 +303,23 @@ class AppConfig:
             (0 <= m.knob_deadzone_deg < 90, "media.knob_deadzone_deg must be in [0, 90)"),
             (m.knob_rate > 0 and m.knob_max_rate > 0, "media knob rates must be > 0"),
             (self.input_mode in INPUT_MODES, f"input_mode must be one of {INPUT_MODES}"),
+            *self._slides_checks(),
             *self._face_checks(),
         ]
         errors = [message for ok, message in checks if not ok]
         if errors:
             raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
+
+    def _slides_checks(self) -> list[tuple[bool, str]]:
+        sl = self.slides
+        return [
+            (sl.swipe_distance > 0 and sl.zoom_distance > 0, "slides distances must be > 0"),
+            (sl.axis_ratio >= 1, "slides.axis_ratio must be >= 1"),
+            (0 < sl.rest_speed < sl.move_speed, "need 0 < slides.rest_speed < move_speed"),
+            (sl.rest_time > 0 and sl.max_stroke > 0, "slides rest_time / max_stroke must be > 0"),
+            (0 <= sl.min_fingers <= 4, "slides.min_fingers must be in [0, 4]"),
+            (sl.return_window >= 0 and sl.zoom_steps >= 1, "invalid slides return / zoom steps"),
+        ]
 
     def _face_checks(self) -> list[tuple[bool, str]]:
         fc, e, h = self.face, self.eyes, self.head
