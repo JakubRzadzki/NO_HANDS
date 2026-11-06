@@ -54,6 +54,9 @@ class FaceOutput:
     pointer: tuple[float, float] | None = None  # screen px the gaze / nose points at
     feature: tuple[float, float] | None = None  # iris offset (--eyes) or head offset (--head)
     nudge: tuple[float, float] | None = None  # px the head adds to the gaze point (--eyes)
+    gaze_raw: tuple[float, float] | None = None  # px, this frame's gaze estimate (unfiltered)
+    fixation: tuple[float, float] | None = None  # px, the fixation the cursor sits on
+    radius: float = 0.0  # px, gaze moves smaller than this do not jump the cursor
 
 
 class _OpenBaseline:
@@ -132,13 +135,22 @@ class HeadNudge:
 
     The offset is the head turn since the last gaze jump, in px. Right after a jump the head is
     often still finishing its own part of the gaze shift, so for ``SETTLE`` seconds the
-    reference follows the head instead of moving the cursor."""
+    reference follows the head instead of moving the cursor. Turns within ``deadzone`` degrees
+    do nothing: a head never holds still, and without the dead zone its drift moved the cursor
+    away from where the eyes were looking (in simulation +36% error for a fidgety head)."""
 
     SETTLE = 0.4  # s
 
-    def __init__(self, gain_px_per_deg: float, max_px: float, filter_cfg: FilterConfig) -> None:
+    def __init__(
+        self,
+        gain_px_per_deg: float,
+        max_px: float,
+        filter_cfg: FilterConfig,
+        deadzone_deg: float = 0.0,
+    ) -> None:
         self.gain = gain_px_per_deg
         self.max = max_px
+        self.deadzone = deadzone_deg
         self._filter = OneEuroFilter(filter_cfg.min_cutoff, filter_cfg.beta, filter_cfg.d_cutoff)
         self._ref: np.ndarray | None = None
         self._settle_until = -math.inf
@@ -154,7 +166,9 @@ class HeadNudge:
         angles = np.asarray(head, dtype=np.float64)
         if self._ref is None or t < self._settle_until:
             self._ref = angles
-        offset = np.clip(self.gain * (angles - self._ref), -self.max, self.max)
+        turn = angles - self._ref
+        beyond = np.sign(turn) * np.maximum(np.abs(turn) - self.deadzone, 0.0)
+        offset = np.clip(self.gain * beyond, -self.max, self.max)
         x, y = self._filter(offset, t)
         return float(x), float(y)
 
@@ -182,8 +196,12 @@ class EyeEngine:
             self._fixation_radius(), cfg.saccade_frames, cfg.fixation_settle, cfg.fixation_dwell
         )
         self._nudge = HeadNudge(
-            cfg.head_nudge * self.screen_w, cfg.head_nudge_max * self.screen_w, filter_cfg
+            cfg.head_nudge * self.screen_w,
+            cfg.head_nudge_max * self.screen_w,
+            filter_cfg,
+            cfg.head_nudge_deadzone,
         )
+        self._gaze_raw: tuple[float, float] | None = None
         self._nudge_offset: tuple[float, float] | None = None
         self._nose_samples: list[tuple[float, float]] = []
         self._nose_mapper: CursorMapper | None = None
@@ -266,6 +284,7 @@ class EyeEngine:
             if self._scroll
             else FaceMode.EYES
         )
+        gaze = self.cfg.pointer == "gaze"
         return FaceOutput(
             mode,
             self._label(t, mode),
@@ -275,7 +294,10 @@ class EyeEngine:
             self._closure.closed,
             pointer,
             (features[0], features[1]),
-            self._nudge_offset if self.cfg.pointer == "gaze" else None,
+            self._nudge_offset if gaze else None,
+            self._gaze_raw if gaze else None,
+            self._fixation.center if gaze else None,
+            self._fixation.radius if gaze else 0.0,
         )
 
     # -- gestures --------------------------------------------------------------------------
@@ -323,6 +345,7 @@ class EyeEngine:
         if self.cfg.pointer == "gaze":
             assert self.model is not None
             gaze = self.model.predict(features, obs.head_position[2])
+            self._gaze_raw = gaze
             x, y = self._fixation.update(gaze, t)
             if self._fixation.jumped:
                 self._nudge.restart(t)
