@@ -87,7 +87,7 @@ released.
 | Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
 | Double click | **thumb + ring** (or two quick left clicks) | 0.5 s cooldown |
 | Scroll | **index + middle** extended and together, ring + pinky curled; move the hand up/down/sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone |
-| Zoom | "horns": **index + pinky** up, middle + ring curled; spread/close thumb and index | Ctrl + wheel in steps (0.12 palm lengths of spread per wheel tick) |
+| Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
 | Clutch | **fist** | `absolute`: pauses output; `--relative`: "lifts the mouse" |
 
 - **Pinch like an "OK" sign**, with the other fingers extended. A pinch with the other fingers
@@ -120,30 +120,38 @@ sideways already moves the cursor, so it cannot also mean "next track".
 ## Slides (`--slides`)
 
 A presenter's remote in your hand, for PowerPoint, Google Slides, Keynote, PDF viewers and
-photo viewers. There is no cursor in this mode: the hand only makes strokes.
+photo viewers. There is no cursor in this mode.
 
-| Action | Hand stroke |
+| Action | Gesture |
 | --- | --- |
 | Previous / next slide | a quick stroke of the open hand left / right (Left / Right arrow) |
-| Zoom in / out | a quick stroke up / down (Ctrl + mouse wheel, 2 steps) |
+| Zoom in / out | **pinch** thumb + index, then move the hand up / down (Ctrl + mouse wheel, one step per ~3 cm) |
 
-A stroke counts only if it:
-- starts and ends with the hand still, inside the frame;
-- is quick (at least one palm length, ~9 cm, in under ~0.6 s);
-- runs mostly along one axis;
-- is made with an open hand (at least 3 fingers straight).
+**Swipes the way people make them.** The slide changes as soon as the fast part of the movement
+ends: when the hand slows down or turns back. You do not have to hold the hand still before or
+after. These all work:
+- a swipe that comes straight back;
+- a swipe started while the hand is still moving into place;
+- a flick of the wrist with the arm almost still.
 
-The slide changes ~0.2 s after the hand stops. These rules keep a talk free of wrong slides:
-- **The way back is ignored.** An opposite stroke within 0.8 s of a swipe counts as the hand
-  returning. Swipe right, bring the hand back, swipe right again: two slides forward.
-- **Raising the hand into view or lowering it out of view does nothing.** Those strokes never
-  start, or never end, with the hand resting in the frame.
+A swipe has to be fast, at least a palm length (~11 cm) long, mostly sideways and made with an
+open hand. That keeps a talk free of wrong slides:
+- **The way back is ignored.** An opposite stroke within 0.8 s of a swipe is the hand
+  returning. Swipe right, back, right, back: two slides forward.
+- **Talking with your hands is fine.** Bobbing, up/down beats and slow sweeps are too slow,
+  too short or vertical.
+- **Raising the hand into view, lowering it out of view, or swiping off the frame edge** does
+  nothing.
 - **To move the hand without swiping**, make a fist or move it slowly.
 - **Close or far does not matter:** distances are measured in palm lengths.
 
-The HUD shows the wrist's path, the stroke as it happens and whether the hand counts as open.
-Zoom uses Ctrl + wheel, which PowerPoint's slide show, browsers and PDF viewers understand. The
-thresholds are in `SlidesConfig` in `config.py`.
+**Zoom is a pinch**, not a vertical swipe. Up/down strokes were tried first: in simulation every
+up/down beat made while talking zoomed the slide. Nobody pinches by accident. While pinched,
+sideways movement never changes the slide. Zoom uses Ctrl + wheel: PowerPoint's slide show
+zooms with it (up to 400%), and so do browsers and PDF viewers.
+
+The HUD shows the hand's path, the stroke as it happens and whether the hand counts as open.
+The thresholds are in `SlidesConfig` in `config.py`.
 
 ## Eyes (`--eyes`)
 
@@ -152,7 +160,7 @@ A mouse without hands: look where the cursor should go and click with your eyes.
 | Action | How |
 | --- | --- |
 | Move the cursor | look at the spot: the cursor jumps there and stays |
-| Fine-tune the cursor | turn the head slightly towards the target (2% of the screen width per degree, up to 15%) |
+| Fine-tune the cursor | turn the head towards the target, more than 1.5° (then 3% of the screen width per degree, up to 15%) |
 | Left click | a deliberate blink with both eyes, 0.35–1 s |
 | Double click | a second deliberate blink within 1.2 s |
 | Right click | wink with the right eye (≥ 0.3 s) |
@@ -183,14 +191,30 @@ is built around that:
   the cursor follows within ~0.1 s. It averages your gaze there for 0.6 s and then freezes.
   - Looking around inside that spot, including at the cursor itself, does not move it, so the
     cursor never "runs away" from your gaze.
-  - A smaller shift, below the jump radius printed in the log (~3× the jitter), moves the
-    cursor after 0.6 s of looking there.
-- **The last centimetres are done with the head.** After a jump, turn the head slightly towards
-  the target. The next gaze jump resets this, so it never adds up. `EyeConfig.head_nudge = 0`
+  - A shift beyond the jump radius (~3× the jitter, shown in the log and on the gaze map)
+    that was not a clear jump moves the cursor after 0.6 s of looking there.
+  - **Smaller shifts never move it, on purpose.** Letting them move it was tried in
+    simulation: with a calibration ~140 px off, the cursor ran away from the gaze in 20 of 20
+    tries, and false moves rose from 0.8 to 2–4 per minute.
+- **The last centimetres are done with the head.** After a jump, turn the head towards the
+  target: past a 1.5° dead zone the cursor follows the turn. The next gaze jump resets this,
+  so it never adds up. Without the dead zone a head that is never quite still pulled the
+  cursor away from where you looked (+36% error in simulation). `EyeConfig.head_nudge = 0`
   turns it off.
 - **Head movement is compensated.** Where you look depends on the eyes and on where the head
   points and sits. The model uses MediaPipe's 3D head pose, so turning, leaning or moving closer
   while looking at the same spot keeps the cursor there.
+
+**The gaze map** in the preview's bottom-right corner is a small picture of the screen. It
+shows what the pointer does and why:
+- red dots: the raw gaze estimates of the last second;
+- green ring: the fixation the cursor sits on and the jump radius;
+- white cross: the cursor.
+
+How to read it:
+- red dots in a tight cloud off to one side of where you look = calibration error (recalibrate);
+- a wide cloud = jitter (more light);
+- red dots outside the ring while the cursor stays = a shift too small for a jump (use the head).
 
 **Tips:**
 - Light on your face matters most: a window or a lamp in front of you, not behind you.
@@ -267,13 +291,15 @@ parameters are in `config.py`.
 | **Hand mouse:** cursor stops when the thumb rests near a finger | `approach_freeze` ↓ (0 disables freezing) |
 | **Hand mouse:** scroll too fast / too slow | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
 | **Hands:** the hand is not found from far away | come closer, or more light; `TrackerConfig.zoom_crop` (smaller = more magnified, narrower) |
-| **Slides:** strokes are not recognised | does the HUD say "open hand"? Then `SlidesConfig.swipe_distance` ↓ (e.g. 0.8), `move_speed` ↓ |
-| **Slides:** slides change by accident | `swipe_distance` ↑, `min_fingers = 4` |
+| **Slides:** swipes are not recognised | does the HUD say "open hand"? Then `SlidesConfig.swipe_speed` ↓ (e.g. 5), `swipe_distance` ↓ (e.g. 0.9) |
+| **Slides:** slides change while you talk | `swipe_speed` ↑ (e.g. 9), `swipe_distance` ↑, `min_fingers = 4` |
 | **Slides:** the way back changes the slide back | `return_window` ↑ (e.g. 1.2) |
+| **Slides / hand mouse:** zoom too fast / too slow | `SlidesConfig.zoom_travel` / `GestureConfig.zoom_travel` (travel per step) |
 | **Eyes:** the cursor lands far from where you look | recalibrate (`c`) with light on your face; check the accuracy it reports |
 | **Eyes:** the cursor jumps on its own | `EyeConfig.fixation_radius` = 0.12 (fixed; default: automatic, 3× the jitter) |
-| **Eyes:** small gaze shifts are ignored | nudge with the head, or `fixation_dwell` ↓ |
-| **Eyes:** the head nudge is too strong / too weak | `head_nudge` (0.02 = 2% of the screen width per degree; 0 = off) |
+| **Eyes:** small gaze shifts are ignored | by design (see above): nudge with the head; better light lowers the jitter and with it the radius |
+| **Eyes:** the head nudge is too strong / too weak | `head_nudge` (0.03 = 3% of the screen width per degree; 0 = off) |
+| **Eyes:** the cursor moves when the head moves a little | `head_nudge_deadzone` ↑ (e.g. 2.5 degrees) |
 | **Eyes:** blinks click by accident | `blink_min` ↑ (e.g. 0.45) |
 | **Head:** arrows fire too easily | `HeadConfig.yaw_threshold` / `pitch_threshold` ↑ |
 | **Head:** quick turns are missed | `gesture_time` ↑ (e.g. 0.8) or the thresholds ↓ |
@@ -299,7 +325,9 @@ parameters are in `config.py`.
 - **One hand, one face:** keep one hand in the frame (`num_hands=1`). `--eyes` and `--head`
   track one face, which must be reasonably large in the frame: sit within about 1 m.
 - **Eyes:** 1–3 cm of accuracy is what a laptop webcam allows; see [Eyes](#eyes---eyes).
-- **Slides:** a stroke that leaves the frame does nothing; it has to end with the hand in view.
+- **Slides:** a big, fast sideways gesture while talking can still change the slide: no detector
+  can tell it from a swipe of the same size and speed. Keep a fist while gesturing, or pause.
+- **Eyes:** shifts smaller than the jump radius (~3× the jitter) need the head; see above.
 
 ## How it works
 
@@ -370,11 +398,25 @@ tested without a camera and a display:
   are equal. A 0.6×0.6 box from a 4:3 camera on a 16:9 screen would make horizontal movement
   33% more sensitive.
 - **Independent of the frame rate:** scroll and volume speeds are rate × dt with a fractional
-  accumulator, and zoom steps follow the hand's spread. "N ticks per frame" would scroll twice
+  accumulator, and zoom steps follow the hand's travel. "N ticks per frame" would scroll twice
   as fast at 60 FPS as at 30 FPS.
-- **Slides by stroke segmentation:** rest → quick stroke → rest, instead of "the hand moved far
-  in the last 0.3 s". A moving window also fires when a hand is raised into view or lowered out
-  of it. A stroke that has to start and end at rest never does.
+- **Zoom by vertical travel, not by thumb spread.** The first version zoomed with the distance
+  between the thumb and the straight index finger. A thumb cannot get much closer to a straight
+  index than where it starts, so zooming out stopped after a step or two; bending the index to
+  get there broke the pose. Now the thumb is free and the hand's height sets the zoom, in
+  detents that move by whole steps, so noise never flickers in and out.
+- **Slides: strokes cut out by speed, measured at the hand's centroid.**
+  - A first version required rest → quick stroke → rest. In simulated natural swipes it missed
+    *every* swipe that came straight back, every swipe started while the hand was still moving,
+    and every wrist flick: 0 of 20 in each case.
+  - Now a stroke ends as soon as the hand slows down or turns back.
+  - It is tracked at the centroid of all landmarks, because a flick swings the fingers around a
+    wrist that barely moves.
+  - On the same simulation every natural swipe is caught (20 of 20, also with blur dropouts),
+    and none of the presenter's other movements fire: raising, lowering, repositioning,
+    talking gestures, reaching to the face.
+  - Real MediaPipe keeps the hand under webcam motion blur: at most 1–2 frames lost even for
+    very fast strokes, which the detector tolerates.
 - **Head pose from the 3D face transform.** MediaPipe fits a 3D face model to all 478 landmarks,
   so the angles are steady and in degrees. An earlier 2D measure, the nose's offset from the
   eyes in the image, gave the wrong direction as soon as the head was also tilted.
