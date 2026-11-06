@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import cv2
@@ -289,16 +290,68 @@ FACE_COLORS: dict[FaceMode, Color] = {
 FACE_EVENTS = {"LEFT CLICK", "DOUBLE CLICK", "RIGHT CLICK", "LEFT", "RIGHT", "UP", "DOWN"}
 
 
+class GazeMap:
+    """A small picture of the screen in the preview's corner, so you can see what the gaze
+    pointer is doing and why:
+
+        red dots ...... the raw gaze estimates of the last second (their spread = the jitter)
+        green ring .... the fixation the cursor sits on, and how far the gaze must jump to move it
+        white cross ... the cursor (the fixation plus the head nudge)
+
+    A cloud of red dots off to one side of where you look is calibration error; a cloud that is
+    wide is jitter (light); red dots far outside the ring while the cursor does not follow means
+    the jump radius is too large for your setup."""
+
+    def __init__(self, screen_size: tuple[int, int], history: int = 30) -> None:
+        self.screen = screen_size
+        self._raw: deque[tuple[float, float]] = deque(maxlen=history)
+
+    def draw(self, frame: npt.NDArray[np.uint8], out: FaceOutput) -> None:
+        if out.gaze_raw is not None:
+            self._raw.append(out.gaze_raw)
+        h, w = frame.shape[:2]
+        k = max(w / 1280.0, 1.0)  # frames wider than 1280 px are shrunk for display
+        map_w = round(240 * k)
+        map_h = round(map_w * self.screen[1] / self.screen[0])
+        x0, y0 = w - map_w - round(10 * k), h - map_h - round(10 * k)
+        region = frame[y0 : y0 + map_h, x0 : x0 + map_w]
+        region[:] = cv2.convertScaleAbs(region, alpha=0.3, beta=0)
+        cv2.rectangle(frame, (x0, y0), (x0 + map_w, y0 + map_h), GRAY, 1, cv2.LINE_AA)
+        scale = map_w / self.screen[0]
+
+        def to_map(p: tuple[float, float]) -> tuple[int, int]:
+            x = min(max(p[0], 0.0), self.screen[0] - 1.0)
+            y = min(max(p[1], 0.0), self.screen[1] - 1.0)
+            return x0 + round(x * scale), y0 + round(y * scale)
+
+        for p in self._raw:
+            cv2.circle(frame, to_map(p), max(1, round(2 * k)), RED, -1, cv2.LINE_AA)
+        if out.fixation is not None:
+            radius = max(2, round(out.radius * scale))
+            cv2.circle(frame, to_map(out.fixation), radius, GREEN, 1, cv2.LINE_AA)
+        if out.pointer is not None:
+            cx, cy = to_map(out.pointer)
+            arm = round(6 * k)
+            cv2.line(frame, (cx - arm, cy), (cx + arm, cy), WHITE, 2, cv2.LINE_AA)
+            cv2.line(frame, (cx, cy - arm), (cx, cy + arm), WHITE, 2, cv2.LINE_AA)
+
+
 class FaceHud:
     """Preview for --eyes / --head: eye outlines, irises, nose, eye openness and the mode."""
 
     def __init__(
-        self, mode: str, face: FaceConfig, head: HeadConfig, calibration: str | None = None
+        self,
+        mode: str,
+        face: FaceConfig,
+        head: HeadConfig,
+        calibration: str | None = None,
+        screen_size: tuple[int, int] | None = None,  # --eyes with the gaze pointer: a GazeMap
     ) -> None:
         self.mode = mode
         self.face = face
         self.head = head
         self.calibration = calibration  # one-line quality summary of the gaze calibration
+        self.gaze_map = GazeMap(screen_size) if screen_size is not None else None
 
     def draw(
         self,
@@ -317,6 +370,8 @@ class FaceHud:
             for index in IRIS_CENTERS:
                 cv2.circle(frame, _pt(pts[index]), 3, color, -1, cv2.LINE_AA)
             cv2.circle(frame, _pt(pts[NOSE_TIP]), 4, ORANGE, -1, cv2.LINE_AA)
+        if self.gaze_map is not None:
+            self.gaze_map.draw(frame, out)
 
         lines: list[tuple[str, float, Color]] = [
             ("PAUSED (global)" if paused else out.label, 0.8, color),
