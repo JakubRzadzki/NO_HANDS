@@ -72,22 +72,45 @@ def test_a_small_head_turn_nudges_the_cursor_and_a_gaze_jump_resets_it() -> None
     d.hold(1.0, gaze=gaze_for(1200, 500))
     out = d.step(gaze=gaze_for(1200, 500))
     assert out.pointer == pytest.approx((1200, 500), abs=10)
-    d.hold(1.5, gaze=gaze_for(1200, 500), yaw=3.0, pitch=-2.0)  # eyes stay, head turns
-    out = d.step(gaze=gaze_for(1200, 500), yaw=3.0, pitch=-2.0)
-    per_degree = 0.02 * SCREEN[0]  # head_nudge
-    assert out.pointer == pytest.approx((1200 + 3 * per_degree, 500 - 2 * per_degree), abs=12)
-    assert out.nudge == pytest.approx((3 * per_degree, -2 * per_degree), abs=12)
+    d.hold(1.5, gaze=gaze_for(1200, 500), yaw=4.0, pitch=-3.0)  # eyes stay, head turns
+    out = d.step(gaze=gaze_for(1200, 500), yaw=4.0, pitch=-3.0)
+    per_degree = 0.03 * SCREEN[0]  # head_nudge, beyond the 1.5 degree dead zone
+    expected = (2.5 * per_degree, -1.5 * per_degree)
+    assert out.pointer == pytest.approx((1200 + expected[0], 500 + expected[1]), abs=12)
+    assert out.nudge == pytest.approx(expected, abs=12)
     # The eyes jump elsewhere: the cursor lands where they look, whatever the head did before.
     d.hold(1.0, gaze=gaze_for(400, 300), yaw=3.0, pitch=-2.0)
     out = d.step(gaze=gaze_for(400, 300), yaw=3.0, pitch=-2.0)
     assert out.pointer == pytest.approx((400, 300), abs=10)
 
 
+def test_natural_head_drift_does_not_move_the_cursor() -> None:
+    """A head never holds still. Within the dead zone it must not drag the cursor away from
+    where the eyes look (without one, in simulation, a fidgety head added 36% error)."""
+    d = driver()
+    d.hold(1.0, gaze=gaze_for(1200, 500))
+    pointers = []
+    for i in range(60):  # +-1.2 degrees of drift while the eyes stay on the target
+        out = d.step(gaze=gaze_for(1200, 500), yaw=1.2 * ((i % 20) / 10 - 1), pitch=0.8)
+        if out.pointer is not None:
+            pointers.append(out.pointer)
+    assert max(abs(p[0] - 1200) for p in pointers) < 10
+    assert max(abs(p[1] - 500) for p in pointers) < 10
+
+
+def test_the_gaze_map_data_is_reported() -> None:
+    d = driver(noise=40.0)
+    out = d.step(gaze=gaze_for(960, 540))
+    assert out.gaze_raw == pytest.approx((960, 540), abs=5)
+    assert out.fixation == pytest.approx((960, 540), abs=5)
+    assert out.radius == pytest.approx(120.0)  # 3 x the calibration jitter
+
+
 def test_the_nudge_waits_for_the_head_to_finish_its_part_of_a_gaze_shift() -> None:
     d = driver()
     pointers = []
     for i in range(12):  # the eyes jump, the head follows them for another 0.4 s
-        out = d.step(gaze=gaze_for(1500, 540), yaw=min(i, 8) * 1.0)
+        out = d.step(gaze=gaze_for(1500, 540), yaw=min(i, 8) * 1.5)
         if out.pointer is not None:
             pointers.append(out.pointer[0])
     assert max(pointers[2:]) < 1500 + 20  # no overshoot from the late head movement

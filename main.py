@@ -386,7 +386,10 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
     else:
         engine = HeadArrows(cfg.head, cfg.face, mirrored)
     quality = describe(model) if model is not None else None
-    hud = FaceHud(cfg.input_mode, cfg.face, cfg.head, quality) if cfg.hud.enabled else None
+    gaze_map = s.screen if model is not None else None  # the HUD shows what the gaze does
+    hud = (
+        FaceHud(cfg.input_mode, cfg.face, cfg.head, quality, gaze_map) if cfg.hud.enabled else None
+    )
     window = _WindowWatch(cfg.hud.window_name)
     if hud is not None:
         cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)

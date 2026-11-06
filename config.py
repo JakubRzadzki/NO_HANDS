@@ -196,8 +196,9 @@ class EyeConfig:
     fixation_dwell: float = 0.6  # s: looking this long outside the radius also moves the cursor
     # Gaze cursor: head nudge ("MAGIC pointing"): after the eyes put the cursor near the target,
     # turning the head moves it the rest of the way. Reset by every gaze jump.
-    head_nudge: float = 0.02  # fraction of screen width per degree of head turn (0 = off)
+    head_nudge: float = 0.03  # fraction of screen width per degree beyond the dead zone (0 = off)
     head_nudge_max: float = 0.15  # fraction of screen width
+    head_nudge_deadzone: float = 1.5  # degrees: smaller turns (natural head drift) do nothing
     # Nose pointer: how far (fraction of frame width) the nose travels to cross the screen
     nose_roi_width: float = 0.12
     # Scroll mode: look above / below the screen centre
@@ -340,7 +341,10 @@ class AppConfig:
             (0 <= e.fixation_radius < 1, "eyes.fixation_radius must be in [0, 1)"),
             (e.saccade_frames >= 1, "eyes.saccade_frames must be >= 1"),
             (e.fixation_settle >= 0 and e.fixation_dwell >= 0, "eyes fixation times must be >= 0"),
-            (e.head_nudge >= 0 and e.head_nudge_max >= 0, "eyes.head_nudge values must be >= 0"),
+            (
+                e.head_nudge >= 0 and e.head_nudge_max >= 0 and e.head_nudge_deadzone >= 0,
+                "eyes.head_nudge values must be >= 0",
+            ),
             (0 < e.nose_roi_width <= 1, "eyes.nose_roi_width must be in (0, 1]"),
             (0 <= e.scroll_deadzone < 0.5, "eyes.scroll_deadzone must be in [0, 0.5)"),
             (e.scroll_gain > 0 and e.scroll_max_rate > 0, "eye scroll gain/rate must be > 0"),
