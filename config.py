@@ -137,21 +137,21 @@ class MediaConfig:
 
 @dataclass
 class SlidesConfig:
-    """--slides: quick hand strokes control a presentation (src/slide_gestures.py).
+    """--slides: quick hand strokes change slides, pinch + vertical drag zooms
+    (src/slide_gestures.py). Distances in palm lengths (wrist -> middle knuckle, ~9 cm), speeds
+    in palm lengths per second. Tuned on simulated natural swipes: a swipe that comes straight
+    back, one started while moving into place, a wrist flick; and against slow repositioning,
+    talking gestures, raising / lowering the hand."""
 
-    left / right = Left / Right arrow, up / down = zoom in / out. Distances in palm lengths
-    (wrist -> middle knuckle, ~9 cm), speeds in palm lengths per second."""
-
-    swipe_distance: float = 1.0  # the wrist travels at least this far sideways
-    zoom_distance: float = 1.0  # ... or up / down
-    axis_ratio: float = 1.7  # the main axis must be this much longer than the other (~30 deg)
-    move_speed: float = 2.0  # faster than this starts a stroke
-    rest_speed: float = 0.8  # slower than this for rest_time = the hand rests
-    rest_time: float = 0.12  # s
-    max_stroke: float = 0.6  # s: slower strokes are repositioning, not swipes
-    min_fingers: int = 3  # extended fingers for an "open hand"; a moving fist never swipes
+    swipe_distance: float = 1.2  # the hand travels at least this far sideways ...
+    swipe_speed: float = 6.0  # ... reaching at least this peak speed (talking is slower)
+    start_speed: float = 1.5  # faster than this starts a stroke
+    axis_ratio: float = 1.5  # sideways must be this much longer than up/down (~34 deg)
+    max_stroke: float = 0.8  # s: longer movements are repositioning, not swipes
+    min_fingers: int = 2  # extended fingers when the stroke starts; a moving fist never swipes
     return_window: float = 0.8  # s: an opposite stroke this soon after a swipe is the way back
-    zoom_steps: int = 2  # Ctrl + wheel ticks per zoom stroke
+    arm_time: float = 0.3  # s the hand must be in view before strokes count (raising it)
+    zoom_travel: float = 0.3  # pinched: palm lengths of vertical travel per zoom step
 
 
 @dataclass
@@ -313,12 +313,15 @@ class AppConfig:
     def _slides_checks(self) -> list[tuple[bool, str]]:
         sl = self.slides
         return [
-            (sl.swipe_distance > 0 and sl.zoom_distance > 0, "slides distances must be > 0"),
+            (sl.swipe_distance > 0 and sl.zoom_travel > 0, "slides distances must be > 0"),
             (sl.axis_ratio >= 1, "slides.axis_ratio must be >= 1"),
-            (0 < sl.rest_speed < sl.move_speed, "need 0 < slides.rest_speed < move_speed"),
-            (sl.rest_time > 0 and sl.max_stroke > 0, "slides rest_time / max_stroke must be > 0"),
+            (
+                0 < sl.start_speed < sl.swipe_speed,
+                "need 0 < slides.start_speed < swipe_speed",
+            ),
+            (sl.max_stroke > 0, "slides.max_stroke must be > 0"),
             (0 <= sl.min_fingers <= 4, "slides.min_fingers must be in [0, 4]"),
-            (sl.return_window >= 0 and sl.zoom_steps >= 1, "invalid slides return / zoom steps"),
+            (sl.return_window >= 0 and sl.arm_time >= 0, "slides return_window / arm_time >= 0"),
         ]
 
     def _face_checks(self) -> list[tuple[bool, str]]:
