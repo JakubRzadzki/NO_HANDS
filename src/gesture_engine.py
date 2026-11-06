@@ -41,7 +41,7 @@ from src.hand_tracker import (
 from src.media_gestures import MediaGestures
 from src.os_controller import Action, Click, Press, Release, Scroll, Zoom
 from src.pointer import CursorMapper
-from src.smoother import FloatArray, OneEuroFilter
+from src.smoother import FloatArray
 
 
 class Mode(str, Enum):
@@ -132,6 +132,7 @@ class HandFeatures:
     extension: dict[Finger, float]  # dist(wrist, tip) / dist(wrist, pip)
     index_middle_gap: float  # index tip <-> middle tip, palm lengths
     anchor: tuple[float, float]  # cursor anchor, normalized frame coordinates
+    anchor_px: tuple[float, float]  # the same anchor in px (zoom measures its travel)
     scroll_point: tuple[float, float]  # px, midpoint of the index and middle tips
 
     @classmethod
@@ -149,6 +150,7 @@ class HandFeatures:
         }
         w = anchor_index_weight
         anchor = w * obs.norm[INDEX_MCP, :2] + (1.0 - w) * obs.norm[MIDDLE_MCP, :2]
+        anchor_px = w * obs.px[INDEX_MCP, :2] + (1.0 - w) * obs.px[MIDDLE_MCP, :2]
         scroll_point = (obs.px[INDEX_TIP, :2] + obs.px[MIDDLE_TIP, :2]) / 2.0
         return cls(
             palm_scale=obs.palm_scale,
@@ -156,6 +158,7 @@ class HandFeatures:
             extension=extension,
             index_middle_gap=obs.ndist(INDEX_TIP, MIDDLE_TIP),
             anchor=(float(anchor[0]), float(anchor[1])),
+            anchor_px=(float(anchor_px[0]), float(anchor_px[1])),
             scroll_point=(float(scroll_point[0]), float(scroll_point[1])),
         )
 
@@ -171,6 +174,7 @@ class EngineOutput:
     extended: dict[Finger, bool] = field(default_factory=dict)
     pending_mode: Mode | None = None  # posture change waiting for confirmation
     scroll_origin: tuple[float, float] | None = None  # px, for the HUD
+    zoom_origin: tuple[float, float] | None = None  # px, where the zoom drag started (HUD)
     scroll_rate: tuple[float, float] = (0.0, 0.0)  # ticks/s, for the HUD
     media_active: bool = False  # media mode instead of mouse mode
     knob_offset: float | None = None  # degrees from neutral, for the HUD
@@ -208,7 +212,6 @@ class GestureEngine:
             )
             for finger in PINCH_FINGERS
         }
-        self._zoom_filter = OneEuroFilter(min_cutoff=3.0, beta=0.0)  # plain ~3 Hz low-pass
         # A pinch may only engage after its fingers were seen apart in POINTER mode. Otherwise
         # leaving ZOOM with thumb and index together, or the hand re-appearing mid-pinch, would
         # fire a click nobody asked for. (Edge-triggered, not level-triggered.)
@@ -226,7 +229,8 @@ class GestureEngine:
         self._scroll_origin: tuple[float, float] | None = None
         self._scroll_accum = np.zeros(2)
         self._scroll_rate = np.zeros(2)
-        self._zoom_ref: float | None = None
+        self._zoom_ref: float | None = None  # hand height (px) of the last zoom detent
+        self._zoom_origin: tuple[float, float] | None = None
         self._last_seen: float | None = None
         self._last_t: float | None = None
         self._flash = ""
@@ -319,6 +323,7 @@ class GestureEngine:
             extended=extended,
             pending_mode=raw if pending else None,
             scroll_origin=self._scroll_origin,
+            zoom_origin=self._zoom_origin,
             scroll_rate=(float(self._scroll_rate[0]), float(self._scroll_rate[1])),
             media_active=self._media_active,
             knob_offset=self._media.knob_offset if self._mode is Mode.MEDIA else None,
@@ -517,24 +522,28 @@ class GestureEngine:
 
     # -- ZOOM --------------------------------------------------------------------------------
     def _zoom(self, f: HandFeatures, t: float) -> list[Action]:
-        spread = float(self._zoom_filter(f.pinch[Finger.INDEX], t))
+        """Drag to zoom: in the horns pose, moving the hand up zooms in, down zooms out, one
+        wheel tick per zoom_travel palm lengths, measured at the knuckles (the thumb is free)."""
+        y = f.anchor_px[1]
         if self._zoom_ref is None:
-            self._zoom_ref = spread
+            self._zoom_ref = y
+            self._zoom_origin = f.anchor_px
             return []
-        # Detents: one tick per zoom_step of spread change. The reference moves by whole steps
-        # only, so noise smaller than one step can never produce in-out-in-out flicker.
-        steps = int((spread - self._zoom_ref) / self.cfg.zoom_step)
+        step = self.cfg.zoom_travel * f.palm_scale
+        steps = int((self._zoom_ref - y) / step)  # image y grows downwards: up = positive
         if steps == 0:
             return []
         cap = self.cfg.zoom_max_steps_per_frame
         steps = max(-cap, min(cap, steps))
-        self._zoom_ref += steps * self.cfg.zoom_step
+        # The reference moves by whole detents only, so noise smaller than one detent can never
+        # produce in-out-in-out flicker; going back needs a full detent of travel.
+        self._zoom_ref -= steps * step
         self._set_flash("ZOOM IN" if steps > 0 else "ZOOM OUT", t)
         return [Zoom(steps)]
 
     def _exit_zoom(self) -> None:
         self._zoom_ref = None
-        self._zoom_filter.reset()
+        self._zoom_origin = None
 
     # -- SWITCH: mouse <-> media -------------------------------------------------------------
     def _switch(self, t: float) -> None:
