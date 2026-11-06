@@ -106,9 +106,12 @@ class GestureConfig:
     scroll_horizontal: bool = True
     scroll_invert: bool = False  # True = "natural" (touchpad-like) direction
 
-    # Zoom: index + pinky extended, middle + ring curled; thumb-index spread drives the zoom.
-    zoom_step: float = 0.12  # change of the thumb-index ratio per modifier+wheel tick
-    zoom_max_steps_per_frame: int = 2
+    # Zoom: "horns" (index + pinky extended, middle + ring curled), then move the hand up to
+    # zoom in, down to zoom out: one modifier+wheel tick per zoom_travel of vertical travel.
+    # (Spreading the thumb, the first version, ran out of range: with the index straight the
+    # thumb cannot get much closer to it than where it started, so zooming out stopped.)
+    zoom_travel: float = 0.25  # palm lengths of vertical hand travel per zoom step (~2.3 cm)
+    zoom_max_steps_per_frame: int = 1
 
     hand_lost_grace: float = 0.20  # s: short tracking dropouts must not break a drag
 
@@ -282,7 +285,7 @@ class AppConfig:
             ),
             (g.pinch_confirm_frames >= 1, "pinch_confirm_frames must be >= 1"),
             (g.posture_confirm_frames >= 1, "posture_confirm_frames must be >= 1"),
-            (g.zoom_step > 0, "zoom_step must be > 0"),
+            (g.zoom_travel > 0, "zoom_travel must be > 0"),
             (g.zoom_max_steps_per_frame >= 1, "zoom_max_steps_per_frame must be >= 1"),
             (g.scroll_deadzone >= 0 and g.scroll_gain > 0, "invalid scroll dead zone / gain"),
             (p.mode in ("absolute", "relative"), "pointer mode must be 'absolute' or 'relative'"),

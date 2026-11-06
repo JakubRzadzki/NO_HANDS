@@ -14,7 +14,6 @@ from src.face_tracker import EYE_OUTLINES, IRIS_CENTERS, NOSE_TIP, FaceObservati
 from src.gesture_engine import PINCH_FINGERS, EngineOutput, Finger, LeftState, Mode
 from src.hand_tracker import (
     HAND_CONNECTIONS,
-    INDEX_TIP,
     MIDDLE_MCP,
     THUMB_TIP,
     WRIST,
@@ -168,8 +167,12 @@ class Hud:
             radius = max(int(self.cfg.scroll_deadzone * f.palm_scale), 1)
             cv2.circle(frame, origin, radius, YELLOW, 1, cv2.LINE_AA)
             cv2.arrowedLine(frame, origin, current, YELLOW, 2, cv2.LINE_AA, tipLength=0.2)
-        elif out.mode is Mode.ZOOM:
-            cv2.line(frame, _pt(pts[THUMB_TIP]), _pt(pts[INDEX_TIP]), MAGENTA, 3, cv2.LINE_AA)
+        elif out.mode is Mode.ZOOM and out.zoom_origin is not None:
+            # Drag to zoom: from where the gesture started to the knuckles now (up = zoom in).
+            origin = (int(out.zoom_origin[0]), int(out.zoom_origin[1]))
+            current = (origin[0], int(f.anchor_px[1]))
+            cv2.circle(frame, origin, 6, MAGENTA, -1, cv2.LINE_AA)
+            cv2.arrowedLine(frame, origin, current, MAGENTA, 3, cv2.LINE_AA, tipLength=0.25)
         elif out.mode is Mode.MEDIA:  # the "knob needle": its angle drives the volume
             cv2.line(frame, _pt(pts[WRIST]), _pt(pts[MIDDLE_MCP]), ORANGE, 3, cv2.LINE_AA)
 

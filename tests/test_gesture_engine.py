@@ -202,21 +202,32 @@ def test_spread_fingers_are_not_scroll() -> None:
     assert d.outputs[-1].mode is Mode.POINTER
 
 
-def test_zoom_steps_follow_thumb_index_spread() -> None:
+def test_zoom_follows_the_hand_up_and_down() -> None:
+    """Horns, then drag: up = zoom in, down = zoom out, one wheel tick per 0.25 palm lengths.
+    The thumb is free, so zooming out never runs out of range (the thumb-spread version did:
+    with the index straight, the thumb cannot get much closer to it than where it started)."""
     d = settled()
-    d.hold(rock(0.5), 0.3)
+    d.hold(rock(0.8), 0.3)
     assert d.outputs[-1].mode is Mode.ZOOM
-    zoom_in: list[Action] = []
-    for i in range(1, 31):
-        zoom_in += d.step(rock(0.5 + 0.5 * i / 30)).actions
-    zoom_in += d.hold(rock(1.0), 0.6)
-    assert sum(z.steps for z in of(zoom_in, Zoom)) == 4  # 0.5 / 0.12 -> 4 whole detents
-    zoom_out: list[Action] = []  # the reference is now 0.98; stay clear of detent boundaries
-    for i in range(1, 31):
-        zoom_out += d.step(rock(1.0 - 0.55 * i / 30)).actions
-    zoom_out += d.hold(rock(0.45), 0.6)
-    assert sum(z.steps for z in of(zoom_out, Zoom)) == -4  # (0.45 - 0.98) / 0.12 -> -4
-    assert of(zoom_in + zoom_out, Click) == []
+    palm = 150.0 / 720  # handgen's palm length, in normalised y
+    up = (CENTER[0], CENTER[1] - 1.1 * palm)
+    zoom_in = d.sweep(rock(0.8), CENTER, up, 0.6) + d.hold(rock(0.8), 0.3, center=up)
+    assert [z.steps for z in of(zoom_in, Zoom)] == [1, 1, 1, 1]  # 1.1 / 0.25 -> 4 detents
+    down = (CENTER[0], CENTER[1] + 0.4 * palm)
+    zoom_out = d.sweep(rock(0.8), up, down, 0.8) + d.hold(rock(0.8), 0.3, center=down)
+    # from the last detent (-1.0) down to +0.4: 1.4 / 0.25 -> 5 detents, one tick at a time
+    assert [z.steps for z in of(zoom_out, Zoom)] == [-1] * 5
+    assert of(zoom_in + zoom_out, Click) == [] and of(zoom_in + zoom_out, MoveTo) == []
+
+
+def test_zoom_ignores_the_thumb_and_small_wobble() -> None:
+    d = settled()
+    d.hold(rock(0.8), 0.3)
+    actions: list[Action] = []
+    for i in range(30):  # the thumb moves, the hand wobbles by a fifth of a detent
+        wobble = (CENTER[0], CENTER[1] + (0.05 if i % 2 else -0.05) * 150.0 / 720)
+        actions += d.step(rock(0.5 + 0.5 * (i % 3) / 2), center=wobble).actions
+    assert of(actions, Zoom) == []
 
 
 def test_leaving_zoom_with_fingers_together_does_not_click() -> None:
