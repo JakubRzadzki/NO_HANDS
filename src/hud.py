@@ -234,7 +234,7 @@ class Hud:
             lines.append(
                 (
                     f"stroke x {dx:+.2f}  y {dy:+.2f} palm lengths "
-                    f"(slide at {cfg.swipe_distance:.1f}, zoom at {cfg.zoom_distance:.1f})",
+                    f"(a slide needs {cfg.swipe_distance:.1f} sideways, fast)",
                     0.45,
                     WHITE,
                 )
@@ -247,8 +247,9 @@ class Hud:
             is_open = sum(out.extended.values()) >= cfg.min_fingers
             state = "open hand" if is_open else "not open: strokes are ignored"
             lines.append((f"fingers {fingers}  {state}", 0.45, WHITE if is_open else GRAY))
-        lines.append(("quick stroke left / right = slide, up / down = zoom", 0.4, GRAY))
-        lines.append(("start and stop with the hand still; move a fist to reposition", 0.4, GRAY))
+        lines.append(("quick stroke left / right = previous / next slide", 0.4, GRAY))
+        lines.append(("pinch thumb + index and move up / down = zoom in / out", 0.4, GRAY))
+        lines.append(("move a fist to reposition the hand without swiping", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   ctrl+alt+p / ctrl+alt+q from anywhere", 0.4, GRAY))
 
 

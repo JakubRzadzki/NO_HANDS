@@ -228,7 +228,7 @@ class StrokeTracker:
 
     def process(self, frame: Any, timestamp: float) -> HandObservation | None:
         self.frames += 1
-        x = 0.5 + 0.15 * min(max(self.frames - 30, 0) / 12, 1.0)  # 0.2 s stroke at 60 FPS
+        x = 0.4 + 0.2 * min(max(self.frames - 30, 0) / 10, 1.0)  # a 0.17 s stroke at 60 FPS
         if self.frames > 80:
             raise KeyboardInterrupt
         return make_obs(timestamp, center=(x, 0.55), **OPEN)
