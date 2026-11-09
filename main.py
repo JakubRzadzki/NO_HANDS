@@ -131,6 +131,8 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
         cfg.camera.height = args.height
     if args.fps:
         cfg.camera.fps = args.fps
+    if args.width or args.height:
+        cfg.camera.auto_fallback = False  # an explicit size is kept, however slow
     cfg.camera.mirror = not args.no_mirror
     cfg.camera.open_settings = args.camera_settings
     if args.model:

@@ -274,6 +274,14 @@ def test_probe_camera_flag_prints_the_measured_modes(
     assert "--width 1280 --height 720" in out  # 60 FPS beats more pixels at 30 FPS
 
 
+def test_an_explicit_camera_size_is_kept() -> None:
+    parse = main.build_parser().parse_args
+    assert main.config_from_args(parse([])).camera.auto_fallback
+    assert not main.config_from_args(
+        parse(["--width", "1280", "--height", "720"])
+    ).camera.auto_fallback
+
+
 def test_camera_settings_flag() -> None:
     args = main.build_parser().parse_args(["--camera-settings"])
     assert main.config_from_args(args).camera.open_settings
