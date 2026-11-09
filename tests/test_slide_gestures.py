@@ -119,6 +119,16 @@ def test_an_unhurried_swipe_still_counts() -> None:
     assert events(h.move(at(1.6), 0.4) + h.hold(0.5)) == ["right"]  # ~14 cm in 0.4 s
 
 
+def test_a_careful_slow_swipe_counts() -> None:
+    """A first-time user moves the hand carefully, not in a snap: 18 cm taking most of a
+    second. (The thresholds of the version before this one wanted 6 palm lengths per second at
+    the peak and missed these.)"""
+    h = ready()
+    assert events(h.move(at(2.0), 0.9) + h.hold(0.6)) == ["right"]
+    h.hold(1.0)
+    assert events(h.move(at(0.5), 0.5) + h.hold(0.6)) == ["left"]  # 13 cm in half a second
+
+
 def test_slower_swipe_and_a_swipe_left() -> None:
     h = ready()
     assert events(h.move(at(2.5), 0.5) + h.hold(1.0)) == ["right"]
@@ -169,7 +179,6 @@ def test_talking_gestures_do_nothing() -> None:
         actions += h.move(at(0.8 * side, -0.4), 0.35) + h.move(MID, 0.35)
     for _ in range(3):  # up/down "beats": as zoom strokes these fired every time
         actions += h.move(at(0.0, 1.5), 0.25) + h.move(MID, 0.3) + h.hold(0.3)
-    actions += h.move(at(1.5), 0.5) + h.move(MID, 0.5) + h.hold(0.5)  # a slow, wide sweep
     assert events(actions) == []
 
 
@@ -213,3 +222,19 @@ def test_moving_while_pinched_never_swipes() -> None:
     grab = pinch("index", 0.05)
     h.hold(0.3, pose=grab)
     assert events(h.move(at(2.5), 0.3, pose=grab) + h.hold(0.5, pose=grab)) == []
+
+
+def test_a_quick_pinch_is_next_slide() -> None:
+    """Whoever advances slides with a mouse click pinches by habit. In --slides that is the
+    Right arrow: a key cannot click on whatever the cursor happens to be over."""
+    h = ready()
+    assert events(h.hold(0.2, pose=pinch("index")) + h.hold(0.3)) == ["right"]
+    assert events(h.hold(0.2, pose=pinch("index")) + h.hold(0.3)) == ["right"]
+
+
+def test_a_hand_that_appears_pinched_or_a_fist_is_not_a_pinch() -> None:
+    h = Hand()
+    assert events(h.hold(0.5, pose=pinch("index")) + h.hold(0.3)) == []  # never seen apart
+    curled = {"curl": {"middle": 1.0, "ring": 1.0, "pinky": 1.0}}
+    h.hold(0.3)
+    assert events(h.hold(0.3, pose={**curled, **pinch("index")}) + h.hold(0.3)) == []

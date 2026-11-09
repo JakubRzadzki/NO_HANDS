@@ -170,21 +170,26 @@ class MediaConfig:
 
 @dataclass
 class SlidesConfig:
-    """--slides: quick hand strokes change slides, pinch + vertical drag zooms
-    (src/slide_gestures.py). Distances in palm lengths (wrist -> middle knuckle, ~9 cm), speeds
-    in palm lengths per second. Tuned on simulated natural swipes: a swipe that comes straight
-    back, one started while moving into place, a wrist flick; and against slow repositioning,
-    talking gestures, raising / lowering the hand."""
+    """Swipes that change slides (src/swipes.py): --slides, and the flick of the hand mouse.
 
-    swipe_distance: float = 1.2  # the hand travels at least this far sideways ...
-    swipe_speed: float = 6.0  # ... reaching at least this peak speed (talking is slower)
+    Distances in palm lengths (wrist -> middle knuckle, ~9 cm), speeds in palm lengths per
+    second. Checked on simulated natural swipes (one that comes straight back, one started
+    while moving into place, a wrist flick, a slow careful one) and against slow repositioning,
+    small talking gestures and raising / lowering the hand."""
+
+    swipe_distance: float = 1.0  # the hand travels at least this far sideways (~9 cm) ...
+    swipe_speed: float = 4.0  # ... reaching at least this peak speed (20 cm within ~1 s)
     start_speed: float = 1.5  # faster than this starts a stroke
     axis_ratio: float = 1.5  # sideways must be this much longer than up/down (~34 deg)
-    max_stroke: float = 0.8  # s: longer movements are repositioning, not swipes
-    min_fingers: int = 2  # extended fingers when the stroke starts; a moving fist never swipes
+    max_stroke: float = 1.0  # s: longer movements are repositioning, not swipes
+    min_fingers: int = 2  # fingers not curled when the stroke starts; a moving fist never swipes
     return_window: float = 0.8  # s: an opposite stroke this soon after a swipe is the way back
     arm_time: float = 0.3  # s the hand must be in view before strokes count (raising it)
-    zoom_travel: float = 0.3  # pinched: palm lengths of vertical travel per zoom step
+    # Hand mouse only: the swipe counts once the hand is this much of the way back, this soon.
+    return_fraction: float = 0.5
+    return_time: float = 0.6  # s
+    # --slides only: pinch thumb + index and move up / down
+    zoom_travel: float = 0.3  # palm lengths of vertical travel per zoom step
 
 
 @dataclass
@@ -363,6 +368,10 @@ class AppConfig:
             (sl.max_stroke > 0, "slides.max_stroke must be > 0"),
             (0 <= sl.min_fingers <= 4, "slides.min_fingers must be in [0, 4]"),
             (sl.return_window >= 0 and sl.arm_time >= 0, "slides return_window / arm_time >= 0"),
+            (
+                0 < sl.return_fraction <= 1 and sl.return_time > 0,
+                "slides return_fraction must be in (0, 1], return_time > 0",
+            ),
         ]
 
     def _face_checks(self) -> list[tuple[bool, str]]:
