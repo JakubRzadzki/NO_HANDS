@@ -226,6 +226,14 @@ class Hud:
             lines.append(
                 ("MEDIA MODE: swipe = prev/next, turn = volume, fist = play", 0.45, ORANGE)
             )
+        if out.mode is Mode.CLUTCH:
+            lines.append(("fist = pause. To click, keep the other fingers open.", 0.45, YELLOW))
+        if not out.media_active:
+            lines.append(("thumb + index: button down while they touch (click / drag)", 0.4, GRAY))
+            lines.append(("thumb + middle: right click   2 quick pinches: double click", 0.4, GRAY))
+            lines.append(
+                ("flick the open hand sideways and back: previous / next slide", 0.4, GRAY)
+            )
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)
