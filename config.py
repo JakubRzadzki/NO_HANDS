@@ -145,6 +145,14 @@ class GestureConfig:
     hand_lost_grace: float = 0.20  # s: a short tracking dropout changes nothing
     drag_lost_grace: float = 0.50  # s: ... and while the button is held it may last this long
 
+    # A quick sideways flick of the open hand *that comes straight back* presses Left / Right
+    # (previous / next slide). The way back is what tells it from moving the cursor. It has to
+    # be longer and faster than a --slides swipe, because here the same hand also points and
+    # gestures. False = swipes only in --slides.
+    flick_slides: bool = True
+    flick_distance: float = 1.5  # palm lengths sideways (~14 cm)
+    flick_speed: float = 6.0  # palm lengths per second at the peak
+
 
 @dataclass
 class MediaConfig:
@@ -313,6 +321,7 @@ class AppConfig:
             (0 < g.pinch_enter < g.pinch_exit, "need 0 < pinch_enter < pinch_exit"),
             (0 <= g.pinch_depth_weight <= 1, "pinch_depth_weight must be in [0, 1]"),
             (g.pinch_release_frames >= 1, "pinch_release_frames must be >= 1"),
+            (g.flick_distance > 0 and g.flick_speed > 0, "flick distance / speed must be > 0"),
             (
                 0 <= g.hand_lost_grace <= g.drag_lost_grace,
                 "need 0 <= hand_lost_grace <= drag_lost_grace",

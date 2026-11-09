@@ -58,7 +58,7 @@ def test_real_touching_pinches_read_well_below_the_threshold() -> None:
 
 @pytest.mark.parametrize("hand", HANDS["pinch"], ids=names("pinch"))
 def test_a_real_pinch_presses_holds_and_releases(hand: dict[str, Any]) -> None:
-    engine = make_engine()
+    engine = make_engine(flick_slides=False)
     show(engine, OPEN_HAND, 0.0, 0.3)
     held = show(engine, hand, 0.3, 2.0)
     assert [a for a in held if isinstance(a, Press)] == [Press("left")]
@@ -74,7 +74,7 @@ def test_real_hands_that_are_not_pinching_never_click(group: str) -> None:
     of real fists and 36% of real V signs counted as a pinch."""
     wrong: list[str] = []
     for hand in HANDS[group]:
-        engine = make_engine()
+        engine = make_engine(flick_slides=False)
         show(engine, OPEN_HAND, 0.0, 0.3)
         actions = show(engine, hand, 0.3, 0.6) + show(engine, OPEN_HAND, 0.9, 0.3)
         if any(isinstance(a, Press | Click) for a in actions):
@@ -84,7 +84,7 @@ def test_real_hands_that_are_not_pinching_never_click(group: str) -> None:
 
 def test_real_fists_clutch_and_real_horns_zoom() -> None:
     def mode_for(hand: dict[str, Any]) -> Mode:
-        engine = make_engine()
+        engine = make_engine(flick_slides=False)
         show(engine, OPEN_HAND, 0.0, 0.3)
         show(engine, hand, 0.3, 0.5)
         return engine.mode

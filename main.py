@@ -311,7 +311,9 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
     else:
         roi = Roi.for_screen(camera.frame_size, s.screen, p.roi_width, p.roi_center, p.sensitivity)
         mapper = CursorMapper(roi, s.screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
-        engine = GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
+        engine = GestureEngine(
+            cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media, cfg.slides
+        )
     slides = cfg.slides if cfg.input_mode == "slides" else None
     hud = Hud(cfg.gesture, cfg.hud.show_landmarks, slides) if cfg.hud.enabled else None
     window = _WindowWatch(cfg.hud.window_name)

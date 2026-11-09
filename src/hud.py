@@ -84,7 +84,7 @@ def state_color(out: EngineOutput, paused: bool) -> Color:
         return WHITE
     if out.mode is Mode.NO_HAND:
         return GRAY
-    if out.left_state is not LeftState.IDLE or out.label in CLICK_LABELS:
+    if out.left_state is not LeftState.IDLE or out.label in CLICK_LABELS | SLIDE_EVENTS:
         return GREEN
     return CYAN
 

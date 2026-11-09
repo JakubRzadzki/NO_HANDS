@@ -12,6 +12,7 @@ from src.gesture_engine import HysteresisLatch, LeftState, Mode
 from src.os_controller import (
     Action,
     Click,
+    KeyTap,
     MoveBy,
     MoveTo,
     Press,
@@ -259,6 +260,63 @@ def test_two_quick_pinches_are_a_double_click_on_one_pixel() -> None:
     )
     assert of(actions[first:last], MoveTo) == []  # both clicks on the same pixel
     assert of(d.hold(OPEN, 0.6, center=(0.6, 0.55)), MoveTo)  # then the cursor is free again
+
+
+# -- flick: previous / next slide from the hand mouse ---------------------------------------------
+def flick(d: Driver, to_x: float, out: float = 0.15, back: float = 0.25) -> list[Action]:
+    """The open hand goes sideways to ``to_x`` and straight back."""
+    there = (to_x, CENTER[1])
+    actions = d.sweep(OPEN, CENTER, there, out) + d.sweep(OPEN, there, CENTER, back)
+    return actions + d.hold(OPEN, 0.5)
+
+
+def keys(actions: list[Action]) -> list[str]:
+    return [a.key for a in of(actions, KeyTap)]
+
+
+def test_flick_and_back_changes_the_slide_and_leaves_the_cursor_where_it_was() -> None:
+    d = settled()
+    before = d.outputs[-1]
+    actions = flick(d, CENTER[0] + 0.25)  # 2.1 palm lengths to the right and back
+    assert keys(actions) == ["right"]
+    assert of(actions, Click) == [] and of(actions, Press) == []
+    moves = of(actions, MoveTo)
+    assert before.mode is Mode.POINTER and abs(moves[-1].x - 960) < 15  # back where it was
+    d.hold(OPEN, 1.0)
+    assert keys(flick(d, CENTER[0] - 0.25)) == ["left"]
+
+
+def test_moving_the_cursor_fast_without_coming_back_is_not_a_flick() -> None:
+    d = settled()
+    there = (CENTER[0] + 0.25, CENTER[1])
+    one_way = d.sweep(OPEN, CENTER, there, 0.15) + d.hold(OPEN, 1.0, center=there)
+    assert keys(one_way) == []
+    slow = d.sweep(OPEN, there, CENTER, 0.8) + d.hold(OPEN, 0.5)  # ... and a slow way back
+    assert keys(slow) == []
+
+
+def test_small_or_slow_out_and_back_moves_are_not_flicks() -> None:
+    d = settled()
+    assert keys(flick(d, CENTER[0] + 0.10)) == []  # 0.85 palm lengths: too short
+    d.hold(OPEN, 1.0)
+    assert keys(flick(d, CENTER[0] + 0.25, out=0.8, back=0.8)) == []  # too slow
+
+
+def test_dragging_back_and_forth_is_not_a_flick() -> None:
+    d = settled()
+    d.hold(pinch("index"), 0.4)
+    there = (CENTER[0] + 0.25, CENTER[1])
+    shake = d.sweep(pinch("index"), CENTER, there, 0.15) + d.sweep(
+        pinch("index"), there, CENTER, 0.2
+    )
+    assert keys(shake + d.hold(pinch("index"), 0.3)) == []
+    assert d.engine.left_state is LeftState.DRAG
+
+
+def test_flick_can_be_switched_off() -> None:
+    d = Driver(make_engine(flick_slides=False))
+    d.hold(OPEN, 0.5)
+    assert keys(flick(d, CENTER[0] + 0.25)) == []
 
 
 # -- tracking loss --------------------------------------------------------------------------

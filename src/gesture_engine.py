@@ -17,12 +17,12 @@ deterministic and unit-testable with synthetic landmarks (see tests/handgen.py).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 import numpy as np
 
-from config import GestureConfig, MediaConfig
+from config import GestureConfig, MediaConfig, SlidesConfig
 from src.hand_tracker import (
     INDEX_MCP,
     INDEX_PIP,
@@ -39,9 +39,10 @@ from src.hand_tracker import (
     HandObservation,
 )
 from src.media_gestures import MediaGestures
-from src.os_controller import Action, Click, Press, Release, Scroll, Zoom
+from src.os_controller import Action, Click, KeyTap, Press, Release, Scroll, Zoom
 from src.pointer import CursorMapper
 from src.smoother import FloatArray
+from src.swipes import SwipeDetector
 
 
 class Mode(str, Enum):
@@ -221,12 +222,23 @@ class GestureEngine:
         mapper: CursorMapper,
         anchor_index_weight: float = 0.5,
         media: MediaConfig | None = None,
+        slides: SlidesConfig | None = None,
     ) -> None:
         self.cfg = cfg
         self.mapper = mapper
         self._anchor_weight = anchor_index_weight
         self.media_cfg = media or MediaConfig()
         self._media = MediaGestures(self.media_cfg)
+        # Flick the open hand sideways and straight back = previous / next slide. Same detector
+        # as --slides, with a longer and faster stroke and the way back required.
+        self._slides = replace(
+            slides or SlidesConfig(),
+            swipe_distance=cfg.flick_distance,
+            swipe_speed=max(cfg.flick_speed, (slides or SlidesConfig()).start_speed + 0.1),
+        )
+        self._swipes = (
+            SwipeDetector(self._slides, require_return=True) if cfg.flick_slides else None
+        )
         self._media_active = False  # survives tracking loss: lowering the hand is normal here
         self._switch_since: float | None = None
         self._switch_done = False
@@ -290,6 +302,8 @@ class GestureEngine:
         self._left = LeftState.IDLE
         self._pending_origin = None
         self._cursor_frozen = False
+        if self._swipes is not None:
+            self._swipes.reset()
         for latch in (*self._pinch.values(), *self._finger.values(), self._joined):
             latch.reset()
         self._armed = dict.fromkeys(PINCH_FINGERS, False)
@@ -342,6 +356,8 @@ class GestureEngine:
         if self._mode is Mode.POINTER:
             actions += self._pointer(obs, features, t, posture_pending=pending)
         else:
+            if self._swipes is not None:
+                self._swipes.reset()
             self._cursor_frozen = True
             self.mapper.update(features.anchor, t, frozen=True)  # keep the filter converged
             if self._mode is Mode.SCROLL:
@@ -535,7 +551,31 @@ class GestureEngine:
         if move is not None:
             actions.append(move)  # after Press: the drag starts where the pinch began
 
+        actions += self._flick(obs, f, t, busy=latched or approaching or posture_pending)
         return actions
+
+    def _flick(self, obs: HandObservation, f: HandFeatures, t: float, busy: bool) -> list[Action]:
+        """Open hand flicked sideways and straight back = Left / Right (previous / next slide).
+
+        The cursor follows the hand out and back, so it ends where it was. Moving the cursor
+        never does this: nobody points far, fast, and straight back."""
+        if self._swipes is None:
+            return []
+        if busy:
+            self._swipes.cancel()  # the hand is pinching: it is not swiping
+            return []
+        not_curled = sum(ratio > self.cfg.finger_curled_below for ratio in f.extension.values())
+        direction = self._swipes.update(
+            t,
+            obs.px[:, :2].mean(axis=0),
+            f.palm_scale,
+            not_curled >= self._slides.min_fingers,
+            float(obs.frame_size[0]),
+        )
+        if direction is None:
+            return []
+        self._set_flash("RIGHT >>" if direction == "right" else "<< LEFT", t, 0.6)
+        return [KeyTap(direction)]
 
     def _pending_travel(self) -> float:
         target = self.mapper.target
