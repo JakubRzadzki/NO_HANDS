@@ -5,10 +5,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pytest
 
 from src.gesture_engine import HysteresisLatch, LeftState, Mode
-from src.os_controller import Action, Click, MoveBy, MoveTo, Press, Release, Scroll, Zoom
+from src.os_controller import (
+    Action,
+    Click,
+    MoveBy,
+    MoveTo,
+    Press,
+    Release,
+    Scroll,
+    Zoom,
+)
 from tests.handgen import (
     CENTER,
     FIST,
@@ -45,6 +55,14 @@ def test_hysteresis_latch_needs_both_thresholds_and_confirmation() -> None:
         HysteresisLatch(engage_at=0.3, release_at=0.2)
 
 
+def test_latch_can_let_go_more_slowly_than_it_engages() -> None:
+    latch = HysteresisLatch(0.27, 0.36, confirm_frames=2, release_frames=3)
+    assert [latch.update(0.1) for _ in range(2)] == [False, True]
+    assert [latch.update(0.9) for _ in range(2)] == [True, True]  # two bad frames: still held
+    assert latch.update(0.1) is True  # ... and the count starts again
+    assert [latch.update(0.9) for _ in range(3)] == [True, True, False]
+
+
 # -- pointer ---------------------------------------------------------------------------------
 def test_open_hand_moves_cursor_in_pointer_mode() -> None:
     d = settled()
@@ -55,15 +73,59 @@ def test_open_hand_moves_cursor_in_pointer_mode() -> None:
 
 
 def test_quick_pinch_is_one_click_at_the_frozen_position() -> None:
+    """Press when the fingers meet, release when they part, and no movement in between: the
+    OS sees one clean click on one pixel."""
     d = settled()
     # The hand drifts a little while pinching (less than drag_start_px on screen).
     during = d.sweep(pinch("index"), CENTER, (0.505, 0.55), 0.1)
     after = d.hold(OPEN, 0.3, center=(0.505, 0.55))
-    assert of(during, MoveTo) == []  # cursor frozen: the click lands where the pinch began
-    assert of(during + after, Click) == [Click("left")]
-    assert of(during + after, Press) == []
-    first_move = next(i for i, a in enumerate(after) if isinstance(a, MoveTo))
-    assert after.index(Click("left")) < first_move
+    actions = during + after
+    assert of(actions, Press) == [Press("left")] and of(actions, Release) == [Release("left")]
+    assert of(actions, Click) == []
+    pressed, released = actions.index(Press("left")), actions.index(Release("left"))
+    assert of(actions[pressed:released], MoveTo) == []  # frozen while the button is down
+    assert of(during, MoveTo) == []
+    assert d.outputs[-1].left_state is LeftState.IDLE
+
+
+def test_the_button_is_down_from_the_first_moment_of_the_pinch() -> None:
+    """Feedback from a real user: "thumb + index is not a continuous press". The button used
+    to go down only after 0.25 s of holding; now it is down as long as the fingers touch."""
+    d = settled()  # 60 FPS
+    first = d.hold(pinch("index"), 0.05)  # three frames
+    assert of(first, Press) == [Press("left")]  # pressed after two confirming frames
+    held = d.hold(pinch("index"), 3.0)
+    assert of(held, Press) == [] and of(held, Release) == []  # one press, held for 3 s
+    assert d.engine.left_state is LeftState.DRAG
+    assert of(d.hold(OPEN, 0.2), Release) == [Release("left")]
+
+
+def test_a_held_pinch_survives_bad_frames_and_a_wobbling_grip() -> None:
+    """Real MediaPipe output while a pinching hand moves: the distance wobbles (p95 0.30 palm
+    lengths, the odd frame at 0.5), and with the old 0.22 / 0.32 thresholds the hold broke."""
+    d = settled()
+    d.hold(pinch("index"), 0.4)
+    actions: list[Action] = []
+    for i in range(120):  # 2 s of dragging with a loose, noisy grip
+        ratio = 0.30 if i % 3 else 0.12
+        if i % 20 == 0:
+            ratio = 0.55  # a single wild frame
+        if i % 41 in (5, 6):
+            ratio = 0.50  # two in a row (three would be letting go)
+        actions += d.step(pinch("index", ratio)).actions
+    assert of(actions, Release) == [] and d.engine.left_state is LeftState.DRAG
+    assert of(d.hold(OPEN, 0.2), Release) == [Release("left")]
+
+
+def test_a_relaxed_open_hand_lets_the_button_go_and_can_pinch_again() -> None:
+    """A relaxed open hand keeps the thumb close to the index finger: 0.41-0.46 palm lengths
+    on a real photo. The button must be up there, and the next pinch must work from there."""
+    d = settled()
+    relaxed = pinch("index", 0.42)
+    assert of(d.hold(pinch("index"), 0.5), Press) == [Press("left")]
+    assert of(d.hold(relaxed, 0.2), Release) == [Release("left")]
+    again = d.hold(pinch("index"), 0.1) + d.hold(relaxed, 0.2)
+    assert of(again, Press) == [Press("left")] and of(again, Release) == [Release("left")]
 
 
 def test_long_pinch_drags_and_cursor_follows_during_drag() -> None:
@@ -91,9 +153,9 @@ def test_hysteresis_prevents_click_chatter() -> None:
     d = settled()
     actions = d.hold(pinch("index", 0.10), 0.05)
     for _ in range(3):  # distance wobbles inside the hysteresis band
-        actions += d.hold(pinch("index", 0.30), 1 / 60) + d.hold(pinch("index", 0.18), 1 / 60)
+        actions += d.hold(pinch("index", 0.33), 1 / 60) + d.hold(pinch("index", 0.18), 1 / 60)
     actions += d.hold(OPEN, 0.2)
-    assert of(actions, Click) == [Click("left")]
+    assert of(actions, Press) == [Press("left")] and of(actions, Release) == [Release("left")]
 
 
 def test_right_click_fires_once_per_pinch() -> None:
@@ -113,8 +175,10 @@ def test_right_click_cooldown_and_rearm() -> None:
     assert of(again, Click) == [Click("right")]
 
 
-def test_ring_pinch_double_clicks() -> None:
+def test_ring_pinch_double_click_is_optional() -> None:
     d = settled()
+    assert of(d.hold(pinch("ring"), 0.2) + d.hold(OPEN, 0.2), Click) == []  # off by default
+    d = settled(ring_double_click=True)
     actions = d.hold(pinch("ring"), 0.2) + d.hold(OPEN, 0.2)
     assert of(actions, Click) == [Click("left", 2)]
 
@@ -133,16 +197,81 @@ def test_pinch_works_at_any_distance_from_camera() -> None:
         d.hold(OPEN, 0.5, palm_px=palm_px)
         actions = d.hold(pinch("index"), 0.1, palm_px=palm_px)
         actions += d.hold(OPEN, 0.2, palm_px=palm_px)
-        assert of(actions, Click) == [Click("left")], palm_px
+        assert of(actions, Press) == [Press("left")], palm_px
+        assert of(actions, Release) == [Release("left")], palm_px
+
+
+# -- what is not a pinch -----------------------------------------------------------------------
+def test_thumb_resting_on_a_folded_finger_is_not_a_pinch() -> None:
+    """On real photos of the V sign the thumb lies on the folded ring finger: that fired the
+    thumb + ring double click in 36% of them. A pinching finger reaches for the thumb."""
+    ring_tip = hand_points(curl={"ring": 1.0, "pinky": 1.0})[16]
+    v_sign: dict[str, Any] = {
+        "curl": {"ring": 1.0, "pinky": 1.0},
+        "spread": {"index": 10.0, "middle": -8.0},
+        "thumb_tip": ring_tip + np.array([0.005, 0.0, -0.005]),
+    }
+    d = settled()
+    actions = d.hold(v_sign, 0.5) + d.hold(OPEN, 0.3)
+    assert of(actions, Click) == [] and of(actions, Press) == []
+    assert d.outputs[-1].mode is Mode.POINTER
+
+
+def test_a_fist_with_the_thumb_on_the_index_is_a_fist_not_a_click() -> None:
+    """In a quarter of real fists the thumb tip lies right next to the folded index tip."""
+    index_tip = hand_points(**FIST)[8]
+    fist: dict[str, Any] = {
+        "curl": FIST["curl"],
+        "thumb_tip": index_tip + np.array([0.008, 0.0, -0.004]),
+    }
+    d = settled()
+    actions = d.hold(fist, 0.6)
+    assert d.outputs[-1].mode is Mode.CLUTCH
+    assert of(actions + d.hold(OPEN, 0.3), Press) == []
+
+
+def test_a_pinch_needs_an_open_hand_but_the_hold_does_not() -> None:
+    """Starting a pinch takes an open hand (another finger straight): with all the other
+    fingers folded, real fists look the same. Once the button is down, the other fingers may
+    relax and curl: the hold only watches thumb and index."""
+    pen: dict[str, Any] = {"curl": {"middle": 1.0, "ring": 1.0, "pinky": 1.0}}
+    d = settled()
+    d.hold(pen, 0.2)
+    assert of(d.hold({**pen, **pinch("index")}, 0.5) + d.hold(pen, 0.2), Press) == []
+    d.hold(OPEN, 0.3)
+    assert of(d.hold(pinch("index"), 0.3), Press) == [Press("left")]  # open hand: pressed
+    curled = d.hold({**pen, **pinch("index")}, 1.0)  # ... and the other fingers relax
+    assert of(curled, Release) == [] and d.engine.left_state is LeftState.DRAG
+    assert of(d.hold(OPEN, 0.2), Release) == [Release("left")]
+
+
+def test_two_quick_pinches_are_a_double_click_on_one_pixel() -> None:
+    d = settled()
+    actions: list[Action] = []
+    for i in range(2):  # the hand drifts a few pixels' worth between the two pinches
+        actions += d.hold(pinch("index"), 0.08, center=(CENTER[0] + 0.002 * i, CENTER[1]))
+        actions += d.hold(OPEN, 0.10, center=(CENTER[0] + 0.003 * i + 0.001, CENTER[1]))
+    assert of(actions, Press) == [Press("left")] * 2
+    assert of(actions, Release) == [Release("left")] * 2
+    first, last = (
+        actions.index(Press("left")),
+        len(actions) - 1 - actions[::-1].index(Release("left")),
+    )
+    assert of(actions[first:last], MoveTo) == []  # both clicks on the same pixel
+    assert of(d.hold(OPEN, 0.6, center=(0.6, 0.55)), MoveTo)  # then the cursor is free again
 
 
 # -- tracking loss --------------------------------------------------------------------------
-def test_hand_lost_mid_pinch_does_not_click_later() -> None:
+def test_hand_lost_mid_pinch_releases_and_does_not_click_later() -> None:
     """Regression: the original kept its 'pinched' flag across a lost hand and fired a click
-    when the hand re-appeared open."""
+    when the hand re-appeared open. The button that the pinch pressed is let go when the hand
+    stays lost, and nothing more happens when it comes back."""
     d = settled()
-    actions = d.hold(pinch("index"), 0.1) + d.hold(None, 0.5) + d.hold(OPEN, 0.5)
-    assert of(actions, Click) == [] and of(actions, Press) == []
+    pinched = d.hold(pinch("index"), 0.1)
+    lost = d.hold(None, 0.8)
+    back = d.hold(OPEN, 0.5)
+    assert of(pinched, Press) == [Press("left")] and of(lost, Release) == [Release("left")]
+    assert of(back, Press) == [] and of(back, Release) == [] and of(back, Click) == []
 
 
 def test_hand_reappearing_already_pinched_needs_a_fresh_pinch() -> None:
@@ -156,9 +285,9 @@ def test_short_dropout_keeps_drag_long_dropout_releases() -> None:
     d = settled()
     d.hold(pinch("index"), 0.4)
     assert d.engine.left_state is LeftState.DRAG
-    brief = d.hold(None, 0.1) + d.hold(pinch("index"), 0.2)  # < hand_lost_grace
+    brief = d.hold(None, 0.4) + d.hold(pinch("index"), 0.2)  # < drag_lost_grace (0.5 s)
     assert of(brief, Release) == [] and d.engine.left_state is LeftState.DRAG
-    long = d.hold(None, 0.5)
+    long = d.hold(None, 0.8)
     assert of(long, Release) == [Release("left")]
     assert d.outputs[-1].mode is Mode.NO_HAND
 

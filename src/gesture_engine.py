@@ -57,8 +57,8 @@ class Mode(str, Enum):
 
 class LeftState(str, Enum):
     IDLE = "IDLE"
-    PENDING = "PENDING"  # pinched, not yet decided between click and drag
-    DRAG = "DRAG"  # button is held down
+    PENDING = "PENDING"  # button down, cursor still frozen: a click if released now
+    DRAG = "DRAG"  # button down, the cursor follows the hand
 
 
 class Finger(Enum):
@@ -88,6 +88,8 @@ class HysteresisLatch:
 
     Two thresholds stop a signal that hovers around one boundary from toggling every frame (the
     classic "machine-gun click"); ``confirm_frames`` additionally ignores one-frame outliers.
+    ``release_frames`` (default: the same) can make letting go slower than engaging: a held
+    mouse button must survive a couple of bad frames while the hand moves.
     """
 
     def __init__(
@@ -96,6 +98,7 @@ class HysteresisLatch:
         release_at: float,
         low_active: bool = True,
         confirm_frames: int = 1,
+        release_frames: int | None = None,
     ) -> None:
         if (low_active and engage_at >= release_at) or (not low_active and engage_at <= release_at):
             raise ValueError("the release threshold must lie on the inactive side of engage_at")
@@ -103,6 +106,7 @@ class HysteresisLatch:
         self.release_at = release_at
         self.low_active = low_active
         self.confirm_frames = max(1, confirm_frames)
+        self.release_frames = self.confirm_frames if release_frames is None else release_frames
         self.active = False
         self._streak = 0
 
@@ -113,7 +117,7 @@ class HysteresisLatch:
             flip = value < self.engage_at if self.low_active else value > self.engage_at
         if flip:
             self._streak += 1
-            if self._streak >= self.confirm_frames:
+            if self._streak >= (self.release_frames if self.active else self.confirm_frames):
                 self.active = not self.active
                 self._streak = 0
         else:
@@ -123,6 +127,17 @@ class HysteresisLatch:
     def reset(self) -> None:
         self.active = False
         self._streak = 0
+
+
+def pinch_distance(obs: HandObservation, a: int, b: int, depth_weight: float) -> float:
+    """Distance between two fingertips in palm lengths, depth counted at ``depth_weight``.
+
+    MediaPipe's depth (z) is its least reliable output, and its noise is as large as a pinch is
+    small. On real photos of touching fingers the image distance was 0.09-0.18 palm lengths
+    while the full 3D distance read 0.13-0.26. Some depth is still worth having: seen from
+    the side, fingers that overlap in the image can be far apart."""
+    d = obs.px[a] - obs.px[b]
+    return float(math.sqrt(d[0] ** 2 + d[1] ** 2 + (depth_weight * d[2]) ** 2)) / obs.palm_scale
 
 
 @dataclass(frozen=True)
@@ -137,9 +152,12 @@ class HandFeatures:
 
     @classmethod
     def from_observation(
-        cls, obs: HandObservation, anchor_index_weight: float = 0.5
+        cls, obs: HandObservation, anchor_index_weight: float = 0.5, depth_weight: float = 0.5
     ) -> HandFeatures:
-        pinch = {finger: obs.ndist(THUMB_TIP, finger.tip) for finger in PINCH_FINGERS}
+        pinch = {
+            finger: pinch_distance(obs, THUMB_TIP, finger.tip, depth_weight)
+            for finger in PINCH_FINGERS
+        }
         # A straight finger puts its tip much farther from the wrist than its PIP joint (~1.3x+),
         # a curled one folds the tip back towards the palm (<0.9x). Ratios of distances do not
         # care how the hand is rotated in the image, unlike the common `tip.y < pip.y` test,
@@ -161,6 +179,19 @@ class HandFeatures:
             anchor_px=(float(anchor_px[0]), float(anchor_px[1])),
             scroll_point=(float(scroll_point[0]), float(scroll_point[1])),
         )
+
+
+def is_pinch_shape(f: HandFeatures, finger: Finger, cfg: GestureConfig) -> bool:
+    """Is the hand shaped like a pinch with this finger, apart from the distance?
+
+    The finger reaches for the thumb (bent, not folded), and the hand is open: at least one
+    other finger is straight. A thumb resting on a folded finger - a fist, a V sign, the horns -
+    is not a pinch. Checked on 480 real photos: all the real pinches pass, no fist, V sign or
+    open hand does."""
+    if f.extension[finger] < cfg.pinch_min_extension:
+        return False
+    others = (ratio for other, ratio in f.extension.items() if other is not finger)
+    return any(ratio > cfg.finger_extended_above for ratio in others)
 
 
 @dataclass
@@ -208,13 +239,16 @@ class GestureEngine:
         self._joined = HysteresisLatch(cfg.scroll_join_enter, cfg.scroll_join_exit)
         self._pinch = {
             finger: HysteresisLatch(
-                cfg.pinch_enter, cfg.pinch_exit, confirm_frames=cfg.pinch_confirm_frames
+                cfg.pinch_enter,
+                cfg.pinch_exit,
+                confirm_frames=cfg.pinch_confirm_frames,
+                release_frames=cfg.pinch_release_frames,
             )
             for finger in PINCH_FINGERS
         }
-        # A pinch may only engage after its fingers were seen apart in POINTER mode. Otherwise
-        # leaving ZOOM with thumb and index together, or the hand re-appearing mid-pinch, would
-        # fire a click nobody asked for. (Edge-triggered, not level-triggered.)
+        # A pinch may only engage after its fingers were seen apart. Otherwise leaving ZOOM with
+        # thumb and index together, or the hand re-appearing mid-pinch, would fire a click
+        # nobody asked for. (Edge-triggered, not level-triggered.)
         self._armed = dict.fromkeys(PINCH_FINGERS, False)
 
         self._mode = Mode.NO_HAND
@@ -226,6 +260,7 @@ class GestureEngine:
         self._cursor_frozen = False
         self._last_right = -math.inf
         self._last_double = -math.inf
+        self._settle_until = -math.inf  # the cursor waits here after a click
         self._scroll_origin: tuple[float, float] | None = None
         self._scroll_accum = np.zeros(2)
         self._scroll_rate = np.zeros(2)
@@ -251,7 +286,7 @@ class GestureEngine:
     # -- public API --------------------------------------------------------------------------
     def reset(self) -> list[Action]:
         """Forget all gesture state. Returns the actions needed to release anything held."""
-        actions: list[Action] = [Release("left")] if self._left is LeftState.DRAG else []
+        actions: list[Action] = [] if self._left is LeftState.IDLE else [Release("left")]
         self._left = LeftState.IDLE
         self._pending_origin = None
         self._cursor_frozen = False
@@ -275,7 +310,9 @@ class GestureEngine:
         self._last_seen = t
         dt = 0.0 if self._last_t is None else min(max(t - self._last_t, 0.0), 0.1)
         self._last_t = t
-        features = HandFeatures.from_observation(obs, self._anchor_weight)
+        features = HandFeatures.from_observation(
+            obs, self._anchor_weight, self.cfg.pinch_depth_weight
+        )
         extended = {f: latch.update(features.extension[f]) for f, latch in self._finger.items()}
         joined = self._joined.update(features.index_middle_gap)
         if self._mode is Mode.NO_HAND:  # hand (re)acquired
@@ -295,8 +332,15 @@ class GestureEngine:
             actions += self._on_mode_change(previous_mode)
         pending = raw is not self._mode
 
+        if self._mode in (Mode.POINTER, Mode.CLUTCH):
+            # Fingers seen apart arm the pinch. A fist counts too: a pinch made with the other
+            # fingers curled passes through "fist" for a few frames on its way.
+            for finger in PINCH_FINGERS:
+                if features.pinch[finger] > self.cfg.pinch_exit:
+                    self._armed[finger] = True
+
         if self._mode is Mode.POINTER:
-            actions += self._pointer(features, t, posture_pending=pending)
+            actions += self._pointer(obs, features, t, posture_pending=pending)
         else:
             self._cursor_frozen = True
             self.mapper.update(features.anchor, t, frozen=True)  # keep the filter converged
@@ -332,8 +376,11 @@ class GestureEngine:
 
     # -- tracking loss -----------------------------------------------------------------------
     def _on_no_hand(self, t: float) -> EngineOutput:
-        if self._last_seen is not None and t - self._last_seen <= self.cfg.hand_lost_grace:
+        held = self._left is not LeftState.IDLE
+        grace = self.cfg.drag_lost_grace if held else self.cfg.hand_lost_grace
+        if self._last_seen is not None and t - self._last_seen <= grace:
             # Short dropout (motion blur, fingers crossing the palm): hold everything as it is.
+            # A held button waits longer: a drag must not drop because of a few lost frames.
             return EngineOutput(
                 self._mode,
                 "TRACKING LOST",
@@ -347,8 +394,10 @@ class GestureEngine:
     # -- posture -----------------------------------------------------------------------------
     def _classify(self, ext: dict[Finger, bool], joined: bool, f: HandFeatures) -> Mode:
         i, m, r, p = (ext[Finger.INDEX], ext[Finger.MIDDLE], ext[Finger.RING], ext[Finger.PINKY])
-        if not (i or m or r or p) and f.pinch[Finger.INDEX] > self.cfg.pinch_enter:
-            return Mode.CLUTCH  # fist (and not a pinch made with curled fingers)
+        if not (i or m or r or p):
+            # A fist, wherever the thumb is: in a quarter of real fists its tip lies right next
+            # to the folded index tip, which must not count as a pinch.
+            return Mode.CLUTCH
         if p and not (i or m or r):
             return Mode.SWITCH  # shaka: only the pinky (and the thumb) out
         if i and p and not m and not r:
@@ -375,7 +424,7 @@ class GestureEngine:
     def _on_mode_change(self, previous: Mode) -> list[Action]:
         actions: list[Action] = []
         if previous is Mode.POINTER:
-            if self._left is LeftState.DRAG:  # defensive: an engaged pinch pins POINTER mode
+            if self._left is not LeftState.IDLE:  # defensive: an engaged pinch pins POINTER mode
                 actions.append(Release("left"))
             self._left = LeftState.IDLE
             self._pending_origin = None
@@ -389,12 +438,14 @@ class GestureEngine:
             self._switch_since, self._switch_done = None, False
         elif previous is Mode.MEDIA:
             self._media.reset()
-        if self._mode is Mode.POINTER:
+        if self._mode is Mode.POINTER and previous is not Mode.CLUTCH:
             self._armed = dict.fromkeys(PINCH_FINGERS, False)
         return actions
 
     # -- POINTER: move, click, drag, right click, double click -----------------------------------
-    def _pointer(self, f: HandFeatures, t: float, posture_pending: bool) -> list[Action]:
+    def _pointer(
+        self, obs: HandObservation, f: HandFeatures, t: float, posture_pending: bool
+    ) -> list[Action]:
         cfg = self.cfg
         actions: list[Action] = []
         d = f.pinch
@@ -406,9 +457,6 @@ class GestureEngine:
         best, runner_up = ranked[0], ranked[1]
         clear_winner = d[runner_up] - d[best] >= cfg.pinch_ambiguity_margin
         busy = any(latch.active for latch in self._pinch.values())
-        for finger in PINCH_FINGERS:
-            if d[finger] > cfg.pinch_exit:
-                self._armed[finger] = True
 
         rose: dict[Finger, bool] = {}
         fell: dict[Finger, bool] = {}
@@ -423,33 +471,35 @@ class GestureEngine:
                     and self._armed[finger]
                     and not busy
                     and not posture_pending
+                    and (finger is not Finger.RING or cfg.ring_double_click)
+                    and is_pinch_shape(f, finger, cfg)
                 )
                 latch.update(d[finger] if allowed else math.inf)
             rose[finger] = latch.active and not before
             fell[finger] = before and not latch.active
 
-        # Left button. Pressing immediately would turn every few-pixel wobble into a micro-drag
-        # (e.g. starting a drag-select in a file manager), so the decision is deferred:
-        # released quickly -> click; held long enough or moved far enough -> press and drag.
+        # Left button: down the moment thumb and index meet, up when they part - held exactly as
+        # long as the pinch, like a finger on a real mouse button. The cursor stays frozen for
+        # the first click_max_hold seconds (or until the hand has clearly moved), so a quick
+        # pinch presses and releases on the same pixel: a clean click, never a micro-drag.
+        # After that the cursor follows the hand with the button still down: a drag.
         if rose[Finger.INDEX]:
+            actions.append(Press("left"))
             self._left = LeftState.PENDING
             self._left_t0 = t
             self._pending_origin = self.mapper.target
-        if self._left is LeftState.PENDING:
-            if fell[Finger.INDEX]:
-                actions.append(Click("left"))
-                self._left = LeftState.IDLE
-                self._set_flash("LEFT CLICK", t)
-            elif (
-                t - self._left_t0 >= cfg.click_max_hold
-                or self._pending_travel() >= cfg.drag_start_px
-            ):
-                actions.append(Press("left"))  # at the frozen position = where the pinch began
-                self._left = LeftState.DRAG
-        elif self._left is LeftState.DRAG and fell[Finger.INDEX]:
+        elif self._left is not LeftState.IDLE and fell[Finger.INDEX]:
             actions.append(Release("left"))
+            if self._left is LeftState.PENDING:
+                self._set_flash("LEFT CLICK", t)
+                self._settle_until = t + cfg.click_settle  # a second pinch = a double click
+            else:
+                self._set_flash("DROP", t)
             self._left = LeftState.IDLE
-            self._set_flash("DROP", t)
+        elif self._left is LeftState.PENDING and (
+            t - self._left_t0 >= cfg.click_max_hold or self._pending_travel() >= cfg.drag_start_px
+        ):
+            self._left = LeftState.DRAG
 
         # Right click fires once per pinch (the latch must release before it can fire again);
         # the cooldown additionally absorbs a pinch that "bounces" through the hysteresis band.
@@ -462,18 +512,29 @@ class GestureEngine:
             self._last_double = t
             self._set_flash("DOUBLE CLICK", t)
 
-        # Cursor. Freeze while a pinch is approaching or pending: clicks land exactly where the
-        # cursor was, and two quick pinches stay within the OS double-click distance (~4 px).
+        # Cursor. Freeze while a pinch is approaching or just pressed: clicks land exactly where
+        # the cursor was, and two quick pinches stay within the OS double-click distance (~4 px).
         approaching = cfg.approach_freeze > 0 and d[best] < cfg.approach_freeze
         latched = any(latch.active for latch in self._pinch.values())
+        # After a click the cursor waits a moment where the click landed, so that a second
+        # pinch lands on the same pixel (the OS allows ~4 px between the clicks of a double
+        # click) - unless the hand is clearly moving on.
+        settling = t < self._settle_until and self._pending_travel() < cfg.drag_start_px
         if self._left is LeftState.DRAG:
             frozen = False
         else:
-            frozen = posture_pending or self._left is LeftState.PENDING or approaching or latched
+            frozen = (
+                posture_pending
+                or self._left is LeftState.PENDING
+                or approaching
+                or latched
+                or settling
+            )
         self._cursor_frozen = frozen
         move = self.mapper.update(f.anchor, t, frozen=frozen)
         if move is not None:
             actions.append(move)  # after Press: the drag starts where the pinch began
+
         return actions
 
     def _pending_travel(self) -> float:
@@ -571,7 +632,7 @@ class GestureEngine:
         if self._mode is not Mode.POINTER:
             return self._mode.value
         if self._left is LeftState.PENDING:
-            return "PINCH"
+            return "BUTTON DOWN"
         if self._left is LeftState.DRAG:
-            return "DRAG"
+            return "BUTTON DOWN: DRAG"
         return "HOLD" if self._cursor_frozen else "MOVE"

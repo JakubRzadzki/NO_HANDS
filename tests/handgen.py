@@ -95,8 +95,10 @@ def hand_points(
 
     if thumb_tip is not None:
         tip = np.asarray(thumb_tip, dtype=np.float64)
-    elif pinch is not None:  # thumb tip in front of the fingertip (towards the camera)
-        tip = pts[TIPS[pinch]] + np.array([0.0, 0.0, -pinch_ratio * PALM_M])
+    elif pinch is not None:
+        # Thumb tip beside the fingertip, in the image plane: on real hands the gap of a pinch
+        # is seen in the image (0.09-0.18 palm lengths when touching), and depth is noise.
+        tip = pts[TIPS[pinch]] + np.array([pinch_ratio * PALM_M, 0.0, 0.0])
     elif thumb == "tucked":  # folded over the middle/ring knuckles
         tip = (pts[10] + pts[14]) / 2 + np.array([0.0, -0.01, -0.02])
     else:  # sticking out sideways

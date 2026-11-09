@@ -82,16 +82,39 @@ class PointerConfig:
 
 @dataclass
 class GestureConfig:
-    # Pinch hysteresis: thumb tip <-> finger tip, in palm lengths.
-    pinch_enter: float = 0.22
-    pinch_exit: float = 0.32
-    pinch_confirm_frames: int = 2  # consecutive frames needed to engage/release (rejects glitches)
+    # Pinch: thumb tip <-> finger tip, in palm lengths, with MediaPipe's depth counted at
+    # pinch_depth_weight. Measured on real hands (OK-sign photos, tracked while moving with
+    # motion blur): touching fingers read 0.13-0.20, p95 0.30 in motion; spread open hands
+    # read >= 0.58, a relaxed open hand 0.41-0.46.
+    # The first version used full depth and 0.22 / 0.32: MediaPipe's depth is noisy at exactly
+    # this scale, half of the real touching pinches read 0.22-0.26, so the pinch engaged late
+    # or not at all and a held one let go.
+    pinch_enter: float = 0.27
+    pinch_exit: float = 0.36  # below a relaxed open hand, or the button would stay down
+    pinch_depth_weight: float = 0.5  # 1 = full 3D distance, 0 = distance in the image only
+    pinch_confirm_frames: int = 2  # frames in a row needed to engage (rejects glitches)
+    pinch_release_frames: int = 3  # frames in a row apart before a held pinch lets go
     pinch_ambiguity_margin: float = 0.03  # the closest finger must win by at least this much
-    approach_freeze: float = 0.32  # freeze the cursor while a pinch is closer than this (0 = off)
+    # A pinch is made with an open hand: the pinching finger reaches for the thumb, bent but not
+    # folded (extension ratio 0.98-1.04 on real pinches, below 0.9 for a folded finger), and at
+    # least one other finger is straight. A thumb resting on a folded finger is not a pinch.
+    # On 480 real photos the first version's rule "fired" on 30% of the fists and 36% of the V
+    # signs; with these two conditions on none of the fists, V signs and open hands.
+    pinch_min_extension: float = 0.93
+    # Thumb + ring finger = double click. Off: in a V sign or a relaxed hand the thumb often
+    # holds the ring fingertip, and a stray double click skips a slide. Two quick thumb + index
+    # pinches are a double click anyway.
+    ring_double_click: bool = False
+    approach_freeze: float = 0.33  # freeze the cursor while a pinch is closer than this (0 = off)
 
-    # Left button: one pinch gesture, two meanings.
-    click_max_hold: float = 0.25  # s: released sooner -> click, held longer -> drag
-    drag_start_px: float = 40.0  # moving this far (screen px) while pinched starts the drag early
+    # Left button = thumb + index, held exactly as long as the fingers touch: pressed when they
+    # meet, released when they part. The cursor stays put for the first moment so that a quick
+    # pinch is a clean click; after that it follows the hand with the button down (drag).
+    click_max_hold: float = 0.25  # s the cursor stays frozen after the press (a click)
+    drag_start_px: float = 40.0  # ... unless the hand moves this far (screen px): drag at once
+    click_settle: float = (
+        0.35  # s the cursor stays put after a click: a second pinch = double click
+    )
 
     right_click_cooldown: float = 0.40  # s
     double_click_cooldown: float = 0.50  # s
@@ -119,7 +142,8 @@ class GestureConfig:
     zoom_travel: float = 0.25  # palm lengths of vertical hand travel per zoom step (~2.3 cm)
     zoom_max_steps_per_frame: int = 1
 
-    hand_lost_grace: float = 0.20  # s: short tracking dropouts must not break a drag
+    hand_lost_grace: float = 0.20  # s: a short tracking dropout changes nothing
+    drag_lost_grace: float = 0.50  # s: ... and while the button is held it may last this long
 
 
 @dataclass
@@ -282,6 +306,12 @@ class AppConfig:
         g, p, f, c, m = self.gesture, self.pointer, self.filter, self.camera, self.media
         checks = [
             (0 < g.pinch_enter < g.pinch_exit, "need 0 < pinch_enter < pinch_exit"),
+            (0 <= g.pinch_depth_weight <= 1, "pinch_depth_weight must be in [0, 1]"),
+            (g.pinch_release_frames >= 1, "pinch_release_frames must be >= 1"),
+            (
+                0 <= g.hand_lost_grace <= g.drag_lost_grace,
+                "need 0 <= hand_lost_grace <= drag_lost_grace",
+            ),
             (
                 g.finger_curled_below < g.finger_extended_above,
                 "need finger_curled_below < finger_extended_above",
