@@ -79,24 +79,32 @@ released.
 
 ## Hand mouse (default)
 
-| Action | Gesture | Safeguard |
+| Action | Gesture | Notes |
 | --- | --- | --- |
 | Move cursor | open hand | anchored on the knuckles (LM 5+9), not a fingertip; 1€ filter |
-| Left click | quick **thumb + index** pinch (< 0.25 s) | the cursor freezes while the fingers approach, so the click lands where you aimed |
-| Drag | hold **thumb + index** (> 0.25 s), or move > 40 px while pinched | separating the fingers drops; a short tracking loss (< 0.2 s) does not break the drag |
+| Left button | **thumb + index** touching | the button is down for exactly as long as the fingers touch |
+| Click | touch and let go | the cursor stays frozen while pinching, so the click lands where you aimed |
+| Drag, select, draw | touch, keep touching and move | the cursor follows after 0.25 s or 40 px of movement, button still down |
+| Double click | two quick pinches | the cursor waits 0.35 s after a click, so both land on the same pixel |
 | Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
-| Double click | **thumb + ring** (or two quick left clicks) | 0.5 s cooldown |
+| Previous / next slide | **flick** the open hand left / right **and straight back** | Left / Right arrow; the cursor ends where it was |
 | Scroll | **index + middle** extended and together, ring + pinky curled; move the hand up/down/sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone |
 | Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
 | Clutch | **fist** | `absolute`: pauses output; `--relative`: "lifts the mouse" |
 
-- **Pinch like an "OK" sign**, with the other fingers extended. A pinch with the other fingers
-  clenched looks like a fist to the system.
-- **A pinch is "armed" only after its fingers were seen apart.** So leaving zoom with the
-  fingers together, or a hand coming back into view mid-pinch, does not click.
+- **The left button is held like a real one.** It goes down the moment thumb and index meet and
+  up when they part. A held button survives a few bad frames and up to 0.5 s of lost tracking.
+- **Pinch with an open hand** (like an "OK" sign): at least one other finger straight. Once
+  the button is down, the other fingers may relax. With every finger folded, a pinch looks
+  exactly like a fist, and a fist never clicks.
+- **The flick has to come straight back.** That is what tells it from moving the cursor:
+  nobody points far, fast, and straight back. It also needs to be longer and faster than a
+  `--slides` swipe (about 14 cm, in a snap). `GestureConfig.flick_slides = False` turns it off.
+- **A pinch is "armed" only after its fingers were seen apart.** So a hand coming back into
+  view mid-pinch does not click.
 - **The preview's box** is the active area: the hand inside it covers the whole screen. Its colour
-  shows the mode: cyan = moving, green = click / drag, yellow = scroll, magenta = zoom,
-  red = clutch, orange = media mode.
+  shows the mode: cyan = moving, green = button down / slide changed, yellow = scroll,
+  magenta = zoom, red = clutch, orange = media mode. The panel lists the gestures.
 
 ### Media mode
 
@@ -120,30 +128,32 @@ sideways already moves the cursor, so it cannot also mean "next track".
 ## Slides (`--slides`)
 
 A presenter's remote in your hand, for PowerPoint, Google Slides, Keynote, PDF viewers and
-photo viewers. There is no cursor in this mode.
+photo viewers. There is no cursor in this mode, so the hand can simply move.
 
 | Action | Gesture |
 | --- | --- |
-| Previous / next slide | a quick stroke of the open hand left / right (Left / Right arrow) |
-| Zoom in / out | **pinch** thumb + index, then move the hand up / down (Ctrl + mouse wheel, one step per ~3 cm) |
+| Previous / next slide | move the open hand left / right (Left / Right arrow) |
+| Next slide | a quick **pinch** thumb + index, like a click |
+| Zoom in / out | **pinch** thumb + index and move the hand up / down (Ctrl + mouse wheel, one step per ~3 cm) |
 
 **Swipes the way people make them.** The slide changes as soon as the fast part of the movement
 ends: when the hand slows down or turns back. You do not have to hold the hand still before or
 after. These all work:
+- a careful, unhurried move (about 10 cm; 20 cm taking most of a second is fast enough);
 - a swipe that comes straight back;
 - a swipe started while the hand is still moving into place;
 - a flick of the wrist with the arm almost still.
 
-A swipe has to be fast, at least a palm length (~11 cm) long, mostly sideways and made with an
-open hand. That keeps a talk free of wrong slides:
-- **The way back is ignored.** An opposite stroke within 0.8 s of a swipe is the hand
-  returning. Swipe right, back, right, back: two slides forward.
-- **Talking with your hands is fine.** Bobbing, up/down beats and slow sweeps are too slow,
-  too short or vertical.
-- **Raising the hand into view, lowering it out of view, or swiping off the frame edge** does
-  nothing.
-- **To move the hand without swiping**, make a fist or move it slowly.
-- **Close or far does not matter:** distances are measured in palm lengths.
+What does not change the slide:
+- **The way back.** An opposite stroke within 0.8 s of a swipe is the hand returning. Swipe
+  right, back, right, back: two slides forward.
+- **Small and slow movements:** bobbing while talking, up/down beats, slowly moving the hand.
+- **Raising the hand into view, lowering it out of view, or swiping off the frame edge.**
+- **A fist:** make one to move the hand without swiping.
+
+Close or far does not matter: distances are measured in palm lengths. A wide, quick sideways
+gesture made while talking *is* a swipe here; `SlidesConfig.swipe_speed` and `swipe_distance`
+set how big and fast a swipe has to be.
 
 **Zoom is a pinch**, not a vertical swipe. Up/down strokes were tried first: in simulation every
 up/down beat made while talking zoomed the slide. Nobody pinches by accident. While pinched,
@@ -151,7 +161,6 @@ sideways movement never changes the slide. Zoom uses Ctrl + wheel: PowerPoint's 
 zooms with it (up to 400%), and so do browsers and PDF viewers.
 
 The HUD shows the hand's path, the stroke as it happens and whether the hand counts as open.
-The thresholds are in `SlidesConfig` in `config.py`.
 
 ## Eyes (`--eyes`)
 
@@ -286,13 +295,17 @@ parameters are in `config.py`.
 | **Hand mouse:** cursor jitters while the hand is still | `FilterConfig.min_cutoff` ↓ (e.g. 0.6) |
 | **Hand mouse:** cursor lags behind fast movement | `FilterConfig.beta` ↑ |
 | **Hand mouse:** you have to stretch your arm | `--sensitivity 1.3` or `PointerConfig.roi_width` ↓ |
-| **Hand mouse:** clicks do not register | `GestureConfig.pinch_enter` ↑ (e.g. 0.26); check "pinch I" in the HUD |
+| **Hand mouse:** pinches do not register | keep another finger straight (OK sign); check "pinch I" in the HUD while touching, then `GestureConfig.pinch_enter` ↑ (e.g. 0.32) |
+| **Hand mouse:** the button lets go while dragging | `pinch_exit` ↑ (e.g. 0.42), `pinch_release_frames` ↑, `drag_lost_grace` ↑ |
+| **Hand mouse:** the button does not let go | open the fingers further, or `pinch_exit` ↓ (above `pinch_enter`) |
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
+| **Hand mouse:** the flick does not change the slide | bring the hand straight back; `flick_distance` ↓, `flick_speed` ↓ |
+| **Hand mouse:** slides change while pointing or talking | `flick_distance` ↑, `flick_speed` ↑, or `flick_slides = False` |
 | **Hand mouse:** cursor stops when the thumb rests near a finger | `approach_freeze` ↓ (0 disables freezing) |
 | **Hand mouse:** scroll too fast / too slow | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
 | **Hands:** the hand is not found from far away | come closer, or more light; `TrackerConfig.zoom_crop` (smaller = more magnified, narrower) |
-| **Slides:** swipes are not recognised | does the HUD say "open hand"? Then `SlidesConfig.swipe_speed` ↓ (e.g. 5), `swipe_distance` ↓ (e.g. 0.9) |
-| **Slides:** slides change while you talk | `swipe_speed` ↑ (e.g. 9), `swipe_distance` ↑, `min_fingers = 4` |
+| **Slides:** swipes are not recognised | does the HUD say "open hand"? Then `SlidesConfig.swipe_speed` ↓ (e.g. 3), `swipe_distance` ↓ (e.g. 0.8) |
+| **Slides:** slides change while you talk | `swipe_speed` ↑ (e.g. 6), `swipe_distance` ↑ (e.g. 1.5), `min_fingers = 4` |
 | **Slides:** the way back changes the slide back | `return_window` ↑ (e.g. 1.2) |
 | **Slides / hand mouse:** zoom too fast / too slow | `SlidesConfig.zoom_travel` / `GestureConfig.zoom_travel` (travel per step) |
 | **Eyes:** the cursor lands far from where you look | recalibrate (`c`) with light on your face; check the accuracy it reports |
@@ -303,12 +316,19 @@ parameters are in `config.py`.
 | **Eyes:** blinks click by accident | `blink_min` ↑ (e.g. 0.45) |
 | **Head:** arrows fire too easily | `HeadConfig.yaw_threshold` / `pitch_threshold` ↑ |
 | **Head:** quick turns are missed | `gesture_time` ↑ (e.g. 0.8) or the thresholds ↓ |
-| **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode |
+| **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode (a slow Full HD mode is replaced automatically) |
+| **Linux:** clicks and keys get lost, the cursor moves only over some windows | the session is Wayland (the log says so): log in with an X11 / Xorg session |
 
 ## Limitations
 
-- **Linux:** X11 sessions only; pynput cannot inject events under Wayland. MediaPipe loads
-  `libEGL.so.1`, so minimal systems need the `libegl1` package.
+- **Linux:**
+  - **X11 sessions only.** Under Wayland the mouse and keyboard can be controlled only in some
+    windows (those running through XWayland), so clicks and keys get lost. The app warns at
+    start. On the login screen pick an X11 session (Ubuntu: the gear icon → "Ubuntu on Xorg").
+  - MediaPipe loads `libEGL.so.1`, so minimal systems need the `libegl1` package.
+  - Some cameras deliver Full HD only uncompressed, at 5–10 FPS. When the measured rate is
+    below 20 FPS, the app switches to 1280×720 or 640×480 by itself and says so
+    (`--width` / `--height` keep a size).
 - **macOS:**
   - The terminal needs the Accessibility (control) and Input Monitoring (global hotkeys)
     permissions.
@@ -325,8 +345,10 @@ parameters are in `config.py`.
 - **One hand, one face:** keep one hand in the frame (`num_hands=1`). `--eyes` and `--head`
   track one face, which must be reasonably large in the frame: sit within about 1 m.
 - **Eyes:** 1–3 cm of accuracy is what a laptop webcam allows; see [Eyes](#eyes---eyes).
-- **Slides:** a big, fast sideways gesture while talking can still change the slide: no detector
-  can tell it from a swipe of the same size and speed. Keep a fist while gesturing, or pause.
+- **Slides:** a wide, quick sideways gesture while talking changes the slide: no detector can
+  tell it from a swipe of the same size and speed. Keep a fist while gesturing, or pause.
+- **Pinch:** it needs an open hand (another finger straight). With every finger folded, a pinch
+  and a fist give the same landmarks.
 - **Eyes:** shifts smaller than the jump radius (~3× the jitter) need the head; see above.
 
 ## How it works
@@ -344,7 +366,9 @@ camera thread ──┤   (MediaPipe)  └─▶ SlideGestures  (--slides)      
 Each run uses one tracker and one engine, chosen by the flag. The engines never call the OS:
 they return action objects (`Click`, `Press`, `Scroll`, …). That is why the state machines are
 tested without a camera and a display:
-- **Hands:** synthetic hands (`tests/handgen.py`).
+- **Hands:** synthetic hands (`tests/handgen.py`), and landmarks of real hands
+  (`tests/data/real_hands.json`, MediaPipe output for public MediaPipe sample photos).
+  Synthetic hands are tidy; the problems users reported only showed on the real ones.
 - **Eyes and head:** synthetic faces (`tests/facegen.py`) and a simulated laptop user
   (`tests/gazesim.py`). The simulated user has real geometry: a 15.6" screen with the camera
   above it, eyes that turn inside a moving head, and webcam noise that wanders from frame to
@@ -354,13 +378,14 @@ tested without a camera and a display:
 | --- | --- |
 | `main.py` | command line, the main loops, guaranteed release of held buttons and keys |
 | `config.py` | all parameters as dataclasses + consistency validation (e.g. `pinch_enter < pinch_exit`) |
-| `src/camera.py` | a thread that keeps draining the camera and holds only the newest frame; `--probe-camera` |
+| `src/camera.py` | a thread that keeps draining the camera and holds only the newest frame; falls back to a smaller size when the camera is too slow; `--probe-camera` |
 | `src/hand_tracker.py` | MediaPipe `HandLandmarker` (VIDEO mode), the second search for far hands, landmarks in isotropic pixel space |
 | `src/smoother.py` | 1€ filter for vectors (one shared cutoff frequency for x and y) |
 | `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping |
-| `src/gesture_engine.py` | hand features, debounced posture classification, hysteresis latches, clicks, scroll, zoom |
+| `src/gesture_engine.py` | hand features, debounced posture classification, the pinch button (press / hold / release), right click, scroll, zoom, flick |
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
-| `src/slide_gestures.py` | `--slides`: stroke segmentation (rest → quick stroke → rest), slides and zoom |
+| `src/swipes.py` | swipe detection for `--slides` and the hand mouse's flick: strokes cut out of the hand's motion by speed |
+| `src/slide_gestures.py` | `--slides`: swipes, pinch = next slide, pinch + vertical travel = zoom |
 | `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), 3D head pose, gaze features |
 | `src/gaze.py` | head-compensated gaze model, the 3-phase calibration procedure, the fixation filter |
 | `src/calibration_ui.py` | the full-screen calibration window |
@@ -386,6 +411,29 @@ tested without a camera and a display:
 - **Pinch arbitration:** only the finger clearly closest to the thumb may start a pinch. With
   the thumb on the index finger, the middle fingertip is close too; without this rule a single
   pinch can fire a left *and* a right click.
+- **Pinch distance with half the depth.** MediaPipe's depth (z) is its least reliable output,
+  and its noise is as large as a pinch is small. Measured on real OK-sign photos, tracked by
+  real MediaPipe while moving with motion blur:
+  - **Touching fingers** read 0.09–0.18 palm lengths in the image, but 0.13–0.26 with full
+    depth. The first version engaged below 0.22.
+  - **Before:** for two of four real hands the touching pinch never engaged, and over all
+    four the button was down 57% of the time it was held.
+  - **Now:** depth counts at half weight; the pinch engages below 0.27 and lets go above 0.36
+    (a spread open hand reads ≥ 0.58, a relaxed one 0.41–0.46, so the button comes up there).
+    All four hands engage and the button is down 99% of the time, also at 6 palm lengths per
+    second. A held pinch reads below 0.32 in 99% of the frames even at 9 palm lengths per
+    second, and a single wild frame does not let go (it takes three in a row).
+- **The left button is a button.** It used to go down only after 0.25 s of holding, and a
+  shorter pinch became a synthetic click. Now it is pressed when the fingers meet and released
+  when they part. The cursor stays frozen for the first moment, so a quick pinch is still one
+  clean click on one pixel.
+- **What a pinch looks like, from 480 real photos.** The pinching finger reaches for the
+  thumb: bent, not folded (extension ratio 0.98–1.04, against < 0.9 for a folded finger), and
+  another finger is straight.
+  - Without these two conditions, a thumb resting on a folded finger counted as a pinch on 30%
+    of the fists and 36% of the V signs (as a thumb + ring double click).
+  - With them: every real pinch, and none of the fists, V signs or open hands.
+  - Thumb + ring double click is off by default for the same reason; two quick pinches do it.
 - **1€ filter in screen pixels**, and `beta` depends on the units. Simulation with 2–4 px of
   noise:
   - `beta=0.05` gives ~15 px maximum lag in fast movement and ~1 px jitter at rest;
@@ -405,16 +453,19 @@ tested without a camera and a display:
   index than where it starts, so zooming out stopped after a step or two; bending the index to
   get there broke the pose. Now the thumb is free and the hand's height sets the zoom, in
   detents that move by whole steps, so noise never flickers in and out.
-- **Slides: strokes cut out by speed, measured at the hand's centroid.**
+- **Swipes: strokes cut out by speed, measured at the hand's centroid** (`src/swipes.py`).
   - A first version required rest → quick stroke → rest. In simulated natural swipes it missed
     *every* swipe that came straight back, every swipe started while the hand was still moving,
     and every wrist flick: 0 of 20 in each case.
   - Now a stroke ends as soon as the hand slows down or turns back.
   - It is tracked at the centroid of all landmarks, because a flick swings the fingers around a
     wrist that barely moves.
-  - On the same simulation every natural swipe is caught (20 of 20, also with blur dropouts),
-    and none of the presenter's other movements fire: raising, lowering, repositioning,
-    talking gestures, reaching to the face.
+  - **`--slides`** takes one-way strokes, also careful ones (18 cm taking 0.9 s): 20 of 20 for
+    each kind of swipe in simulation, also with blur dropouts. Raising or lowering the hand,
+    slow repositioning, bobbing, up/down beats and reaching to the face do nothing.
+  - **Hand mouse:** the same detector, but the stroke has to be longer and faster and the hand
+    has to come straight back. In simulation fast pointing never changed the slide, whether
+    the hand stayed there or came back slowly; neither did a wide talking sweep.
   - Real MediaPipe keeps the hand under webcam motion blur: at most 1–2 frames lost even for
     very fast strokes, which the detector tolerates.
 - **Head pose from the 3D face transform.** MediaPipe fits a 3D face model to all 478 landmarks,
