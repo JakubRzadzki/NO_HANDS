@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import logging
+import os
 import signal
 import sys
 import threading
@@ -244,8 +245,26 @@ def _describe(cfg: AppConfig) -> str:
     return f"hands ({cfg.pointer.mode} pointer)"
 
 
+def warn_about_wayland(dry_run: bool) -> None:
+    """pynput injects through X11. Under Wayland that reaches only XWayland windows, so the
+    cursor moves over some windows and not others and clicks get lost: "it works worse on
+    Linux". There is nothing to fix from here; the session has to be an X11 one."""
+    if not sys.platform.startswith("linux") or dry_run:
+        return
+    wayland = os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
+    )
+    if wayland:
+        log.warning(
+            "This is a Wayland session: the mouse and keyboard can only be controlled in some "
+            "windows, so clicks and keys get lost. Log out and pick an X11 session on the login "
+            "screen (Ubuntu: the gear icon -> 'Ubuntu on Xorg'), then run this again."
+        )
+
+
 def run(cfg: AppConfig) -> int:
     enable_dpi_awareness()  # before any coordinate is queried or set (no-op off Windows)
+    warn_about_wayland(cfg.output.dry_run)
     screen = cfg.output.screen_size or detect_screen_size()
     if screen is None:
         screen = FALLBACK_SCREEN

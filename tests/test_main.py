@@ -282,6 +282,25 @@ def test_an_explicit_camera_size_is_kept() -> None:
     ).camera.auto_fallback
 
 
+def test_wayland_sessions_are_warned_about(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """pynput reaches only XWayland windows there: clicks and keys get lost in the others."""
+    monkeypatch.setattr(main.sys, "platform", "linux")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    with caplog.at_level("WARNING"):
+        main.warn_about_wayland(dry_run=False)
+    assert "Wayland" not in caplog.text
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    with caplog.at_level("WARNING"):
+        main.warn_about_wayland(dry_run=True)  # nothing is injected in a dry run
+    assert "Wayland" not in caplog.text
+    with caplog.at_level("WARNING"):
+        main.warn_about_wayland(dry_run=False)
+    assert "Wayland session" in caplog.text and "X11" in caplog.text
+
+
 def test_camera_settings_flag() -> None:
     args = main.build_parser().parse_args(["--camera-settings"])
     assert main.config_from_args(args).camera.open_settings
