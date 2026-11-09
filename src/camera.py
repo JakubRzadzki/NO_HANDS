@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Any, Protocol
 
@@ -76,6 +76,30 @@ def open_capture(cfg: CameraConfig) -> CaptureLike:
     return cv2.VideoCapture(cfg.device_id)
 
 
+FALLBACK_SIZES: tuple[tuple[int, int], ...] = ((1280, 720), (640, 480))
+WARMUP_FRAMES = 5  # the first frames are slow while the sensor and the exposure settle
+
+
+def measure_fps(cap: CaptureLike, frames: int = 15, max_seconds: float = 1.5) -> float | None:
+    """The frame rate the camera delivers right now, or None if it cannot be measured.
+
+    Measured, not asked: CAP_PROP_FPS reports the request, and drivers accept modes they then
+    deliver at a fraction of the speed."""
+    for _ in range(WARMUP_FRAMES):
+        cap.read()
+    delivered = 0
+    started = time.perf_counter()
+    while delivered < frames and time.perf_counter() - started < max_seconds:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            break
+        delivered += 1
+    elapsed = time.perf_counter() - started
+    if delivered < 3 or elapsed <= 0:
+        return None
+    return delivered / elapsed
+
+
 class ThreadedCamera:
     def __init__(
         self,
@@ -83,9 +107,11 @@ class ThreadedCamera:
         capture_factory: Callable[[CameraConfig], CaptureLike] = open_capture,
         stall_timeout: float = 2.0,
         fps_check_frames: int = 90,
+        fps_probe_frames: int = 15,
     ) -> None:
         self._cfg = cfg
         self._fps_check_frames = fps_check_frames
+        self._fps_probe_frames = fps_probe_frames
         self._factory = capture_factory
         self._stall_timeout = stall_timeout
         self._cap: CaptureLike | None = None
@@ -101,16 +127,9 @@ class ThreadedCamera:
 
     # -- lifecycle ---------------------------------------------------------------------------
     def start(self) -> ThreadedCamera:
-        cap = self._factory(self._cfg)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open camera {self._cfg.device_id}")
-        configure_capture(cap, self._cfg)
-        # Read one frame synchronously: the driver may not grant the requested resolution, and
-        # everything downstream (ROI, HUD) must use the size we really get.
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            cap.release()
-            raise RuntimeError(f"Camera {self._cfg.device_id} opened but delivered no frame")
+        cap, frame = self._open(self._cfg)
+        if self._cfg.auto_fallback:
+            cap, frame = self._usable_mode(cap, frame)
         height, width = frame.shape[:2]
         self.frame_size = (int(width), int(height))
         self._cap = cap
@@ -125,6 +144,65 @@ class ThreadedCamera:
             cap.get(cv2.CAP_PROP_FPS),
         )
         return self
+
+    def _open(self, cfg: CameraConfig) -> tuple[CaptureLike, npt.NDArray[Any]]:
+        cap = self._factory(cfg)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open camera {cfg.device_id}")
+        configure_capture(cap, cfg)
+        # Read one frame synchronously: the driver may not grant the requested resolution, and
+        # everything downstream (ROI, HUD) must use the size we really get.
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            cap.release()
+            raise RuntimeError(f"Camera {cfg.device_id} opened but delivered no frame")
+        return cap, frame
+
+    def _usable_mode(
+        self, cap: CaptureLike, frame: npt.NDArray[Any]
+    ) -> tuple[CaptureLike, npt.NDArray[Any]]:
+        """Keep the requested mode if it is fast enough; otherwise take the first smaller size
+        that is, or failing that the fastest one."""
+        cfg = self._cfg
+        fps = measure_fps(cap, self._fps_probe_frames)
+        if fps is None or fps >= cfg.min_fps:
+            return cap, frame
+        height, width = frame.shape[:2]
+        tried: list[tuple[float, CameraConfig]] = [(fps, cfg)]
+        for size in FALLBACK_SIZES:
+            if size[0] >= width:
+                continue
+            trial = replace(cfg, width=size[0], height=size[1], open_settings=False)
+            cap.release()
+            cap, frame = self._open(trial)
+            trial_fps = measure_fps(cap, self._fps_probe_frames)
+            if trial_fps is None:
+                continue
+            tried.append((trial_fps, trial))
+            if trial_fps >= cfg.min_fps:
+                log.warning(
+                    "Camera gives only %.0f FPS at %dx%d: using %dx%d at %.0f FPS instead. "
+                    "(--width / --height keep a size; --probe-camera shows every mode.)",
+                    fps,
+                    width,
+                    height,
+                    frame.shape[1],
+                    frame.shape[0],
+                    trial_fps,
+                )
+                return cap, frame
+        # Nothing is fast enough (dim light: the camera exposes longer at every size).
+        best_fps, best = max(tried, key=lambda item: (round(item[0]), item[1].width))
+        cap.release()
+        cap, frame = self._open(replace(best, open_settings=False))
+        log.warning(
+            "Camera is slow in every mode (best: %.0f FPS at %dx%d). More light usually helps: "
+            "webcams lower their frame rate to expose longer.",
+            best_fps,
+            frame.shape[1],
+            frame.shape[0],
+        )
+        return cap, frame
 
     def stop(self) -> None:
         self._stop.set()

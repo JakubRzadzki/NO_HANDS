@@ -4,6 +4,7 @@ import threading
 import time
 from typing import Any
 
+import cv2
 import numpy as np
 import pytest
 
@@ -109,6 +110,63 @@ def test_a_camera_slower_than_requested_is_reported(caplog: pytest.LogCaptureFix
     with caplog.at_level("WARNING"), make_camera(fake, fps_check_frames=8) as cam:
         cam.read(after_seq=9, timeout=2.0)
     assert "Camera delivers" in caplog.text and "--probe-camera" in caplog.text
+
+
+class SizedCapture(FakeCapture):
+    """A camera whose speed depends on the size it is asked for, with frames of that size:
+    like a webcam that sends Full HD uncompressed at a few frames per second."""
+
+    def __init__(self, frame_times: dict[int, float]) -> None:
+        super().__init__()
+        self.frame_times = frame_times  # requested width -> seconds per frame
+        self.size = (1920, 1080)
+
+    def set(self, prop_id: int, value: float) -> bool:
+        if prop_id == cv2.CAP_PROP_FRAME_WIDTH:
+            self.size = (int(value), self.size[1])
+        elif prop_id == cv2.CAP_PROP_FRAME_HEIGHT:
+            self.size = (self.size[0], int(value))
+        return super().set(prop_id, value)
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        time.sleep(self.frame_times[self.size[0]])
+        return True, np.zeros((self.size[1], self.size[0], 3), np.uint8)
+
+
+def sized_camera(frame_times: dict[int, float], **cfg: Any) -> ThreadedCamera:
+    config = CameraConfig(mirror=False, **cfg)
+    return ThreadedCamera(config, lambda _cfg: SizedCapture(frame_times), fps_probe_frames=4)
+
+
+def test_a_camera_too_slow_at_full_hd_falls_back_to_a_usable_size(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reported by a user: "works better on Windows than on Linux". Some cameras deliver Full
+    HD only uncompressed, at a few frames per second; 8 FPS makes every gesture miss."""
+    monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
+    slow_full_hd = {1920: 1 / 8, 1280: 1 / 100, 640: 1 / 100}
+    with caplog.at_level("WARNING"), sized_camera(slow_full_hd) as cam:
+        assert cam.frame_size == (1280, 720)
+        assert cam.read(timeout=1.0) is not None
+    assert "using 1280x720" in caplog.text
+
+
+def test_a_camera_slow_everywhere_keeps_the_largest_size(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
+    dim_light = {1920: 1 / 14, 1280: 1 / 14, 640: 1 / 14}  # exposure, not the size, is the limit
+    with caplog.at_level("WARNING"), sized_camera(dim_light) as cam:
+        assert cam.frame_size == (1920, 1080)
+    assert "slow in every mode" in caplog.text
+
+
+def test_fast_cameras_and_explicit_sizes_are_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
+    with sized_camera({1920: 1 / 100, 1280: 1 / 100, 640: 1 / 100}) as cam:
+        assert cam.frame_size == (1920, 1080)
+    with sized_camera({1920: 1 / 8, 1280: 1 / 100, 640: 1 / 100}, auto_fallback=False) as cam:
+        assert cam.frame_size == (1920, 1080)  # --width / --height: kept, however slow
 
 
 def test_probe_measures_what_each_mode_really_delivers() -> None:

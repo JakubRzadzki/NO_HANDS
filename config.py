@@ -35,6 +35,12 @@ class CameraConfig:
     )
     buffer_size: int = 1  # minimal driver-side queue = lower latency (some backends ignore it)
     open_settings: bool = False  # Windows: open the driver's settings dialog (exposure, ...)
+    # A camera that cannot keep up at the requested size is useless however sharp it is: some
+    # deliver Full HD only uncompressed, at 5-10 FPS (common on Linux). When the measured rate
+    # is below min_fps, smaller sizes are tried and the first usable one is taken. Off when a
+    # size is given on the command line.
+    auto_fallback: bool = True
+    min_fps: float = 20.0
 
 
 @dataclass
@@ -296,6 +302,7 @@ class AppConfig:
             (f.min_cutoff > 0 and f.d_cutoff > 0, "filter cutoffs must be > 0"),
             (f.beta >= 0, "filter beta must be >= 0"),
             (c.width > 0 and c.height > 0 and c.fps > 0, "camera width/height/fps must be > 0"),
+            (c.min_fps >= 0, "camera.min_fps must be >= 0"),
             (0 <= self.tracker.zoom_crop < 1, "tracker.zoom_crop must be in [0, 1)"),
             (self.output.zoom_modifier in ("ctrl", "cmd"), "zoom_modifier must be ctrl or cmd"),
             (m.toggle_hold > 0, "media.toggle_hold must be > 0"),
