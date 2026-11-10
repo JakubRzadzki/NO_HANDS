@@ -79,6 +79,14 @@ released.
 
 ## Hand mouse (default)
 
+*The pictures are drawings of the gestures, not photos (`docs/make_gesture_images.py` redraws them). Blue outline = the fingers that make the gesture, orange arrow = how the hand or head moves, green ring = the fingers touch.*
+
+<table>
+<tr><td align="center"><img src="docs/gestures/hand_move.png" width="210" alt="Move the cursor: open hand"></td><td align="center"><img src="docs/gestures/hand_left_button.png" width="210" alt="Left button: thumb and index touching"></td><td align="center"><img src="docs/gestures/hand_drag.png" width="210" alt="Drag: keep touching and move"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: index and middle together, move up or down"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_zoom.png" width="210" alt="Zoom: horns, move up or down"></td><td align="center"><img src="docs/gestures/hand_clutch.png" width="210" alt="Pause: fist"></td><td align="center"><img src="docs/gestures/hand_flick.png" width="210" alt="Flick sideways and back: previous or next slide"></td></tr>
+</table>
+
 | Action | Gesture | Notes |
 | --- | --- | --- |
 | Move cursor | open hand | anchored on the knuckles (LM 5+9), not a fingertip; 1€ filter |
@@ -112,6 +120,10 @@ Hold the **shaka** 🤙 (thumb and pinky out, other fingers curled) for 0.6 s to
 the mouse and media mode. It is a separate mode because in mouse mode moving the open hand
 sideways already moves the cursor, so it cannot also mean "next track".
 
+<table>
+<tr><td align="center"><img src="docs/gestures/hand_shaka.png" width="160" alt="Shaka: switch between mouse and media mode"></td><td align="center"><img src="docs/gestures/hand_swipe.png" width="160" alt="Swipe: previous or next track"></td><td align="center"><img src="docs/gestures/hand_volume.png" width="160" alt="Turn the hand like a knob: volume"></td><td align="center"><img src="docs/gestures/hand_play_pause.png" width="160" alt="Fist: play or pause"></td></tr>
+</table>
+
 | Action | Gesture | Notes |
 | --- | --- | --- |
 | Previous / next track | quick sideways **swipe** of the open hand, left / right | ≥ 1.2 palm lengths within 0.3 s, measured at the wrist; the hand travelling back is ignored for 0.6 s |
@@ -129,6 +141,10 @@ sideways already moves the cursor, so it cannot also mean "next track".
 
 A presenter's remote in your hand, for PowerPoint, Google Slides, Keynote, PDF viewers and
 photo viewers. There is no cursor in this mode, so the hand can simply move.
+
+<table>
+<tr><td align="center"><img src="docs/gestures/hand_swipe.png" width="210" alt="Move the open hand left or right: previous or next slide"></td><td align="center"><img src="docs/gestures/slides_pinch.png" width="210" alt="Quick pinch: next slide"></td><td align="center"><img src="docs/gestures/slides_zoom.png" width="210" alt="Pinch and move up or down: zoom"></td></tr>
+</table>
 
 | Action | Gesture |
 | --- | --- |
@@ -165,6 +181,10 @@ The HUD shows the hand's path, the stroke as it happens and whether the hand cou
 ## Eyes (`--eyes`)
 
 A mouse without hands: look where the cursor should go and click with your eyes.
+
+<table>
+<tr><td align="center"><img src="docs/gestures/eyes_blink.png" width="160" alt="Blink with both eyes: left click"></td><td align="center"><img src="docs/gestures/eyes_wink_right.png" width="160" alt="Wink with the right eye: right click"></td><td align="center"><img src="docs/gestures/eyes_wink_left.png" width="160" alt="Wink with the left eye: scroll mode"></td><td align="center"><img src="docs/gestures/eyes_close.png" width="160" alt="Close both eyes for 1.5 s: pause"></td></tr>
+</table>
 
 | Action | How |
 | --- | --- |
@@ -243,6 +263,10 @@ How to read it:
 ## Head (`--head`)
 
 Quick head movements press the arrow keys: slides, photo viewers, video players, lists.
+
+<table>
+<tr><td align="center"><img src="docs/gestures/head_turn.png" width="210" alt="Quick head turn: Left or Right arrow"></td><td align="center"><img src="docs/gestures/head_nod.png" width="210" alt="Quick tilt up or nod down: Up or Down arrow"></td><td align="center"><img src="docs/gestures/eyes_close.png" width="210" alt="Close both eyes for 1.5 s: pause"></td></tr>
+</table>
 
 | Action | Head movement |
 | --- | --- |
