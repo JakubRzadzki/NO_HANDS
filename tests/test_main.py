@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -301,6 +302,58 @@ def test_wayland_sessions_are_warned_about(
     with caplog.at_level("WARNING"):
         main.warn_about_wayland(dry_run=False)
     assert "Wayland session" in caplog.text and "X11" in caplog.text
+
+
+class _FrameCamera:
+    """Stands in for ThreadedCamera: a frame every time it is asked."""
+
+    measured_fps = 30.0
+    is_running = True
+    error = None
+
+    def __init__(self, cfg: CameraConfig) -> None:
+        self.n = 0
+
+    def __enter__(self) -> _FrameCamera:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self, after_seq: int = -1, timeout: float = 1.0) -> FramePacket:
+        self.n += 1
+        return FramePacket(np.zeros((720, 1280, 3), np.uint8), time.perf_counter(), self.n)
+
+
+def _stub_window(monkeypatch: pytest.MonkeyPatch, keys: list[int]) -> list[str]:
+    calls: list[str] = []
+    cv2 = main.cv2
+    monkeypatch.setattr(cv2, "namedWindow", lambda *a: calls.append("named"))
+    monkeypatch.setattr(cv2, "imshow", lambda *a: calls.append("show"))
+    monkeypatch.setattr(cv2, "moveWindow", lambda *a: calls.append("move"))
+    monkeypatch.setattr(cv2, "setWindowProperty", lambda *a: calls.append("prop"))
+    monkeypatch.setattr(cv2, "getWindowProperty", lambda *a: 1.0)
+    monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
+    monkeypatch.setattr(cv2, "waitKey", lambda ms: keys.pop(0) if keys else ord("q"))
+    return calls
+
+
+def test_preview_notes_warn_when_the_loop_is_slower_than_the_camera(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from src.hud import LoopStats
+
+    _stub_window(monkeypatch, [])
+    notes = main._PreviewNotes("preview")
+    notes._started -= 10.0
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    with caplog.at_level("INFO"):
+        notes.after_show(frame, LoopStats(fps=30.0, camera_fps=30.0))
+        assert "choppy" not in caplog.text
+        notes.after_show(frame, LoopStats(fps=3.0, camera_fps=30.0))
+        notes.after_show(frame, LoopStats(fps=3.0, camera_fps=30.0))
+    assert caplog.text.count("choppy") == 1  # once, not every frame
+    assert caplog.text.count("is open") == 1
 
 
 def test_camera_settings_flag() -> None:

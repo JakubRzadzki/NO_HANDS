@@ -190,6 +190,50 @@ class _WindowWatch:
         return self._seen_visible
 
 
+class _PreviewNotes:
+    """Says in the log what the preview window is doing, so "no picture" is never a mystery.
+
+    On the first frame it also moves the window onto the screen and to the front: a window that
+    opens off-screen or behind the terminal (DPI scaling, several monitors) looks like no window."""
+
+    SLOW_FPS = 8.0
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._first = True
+        self._started = time.perf_counter()
+        self._warned = False
+
+    def after_show(self, frame: Any, stats: LoopStats | None = None) -> None:
+        if self._first:
+            self._first = False
+            width = min(int(frame.shape[1]), HUD_DISPLAY_WIDTH)
+            log.info(
+                'Preview window "%s" is open (%d px wide). Cannot see it? Look behind other '
+                "windows; python main.py --camera-test shows only the camera.",
+                self.name,
+                width,
+            )
+            with contextlib.suppress(cv2.error):
+                cv2.moveWindow(self.name, 40, 40)
+                cv2.setWindowProperty(self.name, cv2.WND_PROP_TOPMOST, 1)
+                cv2.setWindowProperty(self.name, cv2.WND_PROP_TOPMOST, 0)
+        if (
+            stats is not None
+            and not self._warned
+            and time.perf_counter() - self._started > 5.0
+            and 0.0 < stats.fps < self.SLOW_FPS
+        ):
+            self._warned = True
+            log.warning(
+                "The program processes only %.0f frames per second (the camera delivers %.0f): "
+                "the preview is choppy and gestures are late. The tracker is too slow for this "
+                "computer at this size: try --width 1280 --height 720.",
+                stats.fps,
+                stats.camera_fps,
+            )
+
+
 @dataclass
 class _Session:
     """What every input mode's loop needs."""
@@ -317,6 +361,7 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
     slides = cfg.slides if cfg.input_mode == "slides" else None
     hud = Hud(cfg.gesture, cfg.hud.show_landmarks, slides) if cfg.hud.enabled else None
     window = _WindowWatch(cfg.hud.window_name)
+    notes = _PreviewNotes(cfg.hud.window_name)
     if hud is not None:
         cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
     stats = LoopStats()
@@ -359,6 +404,7 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
         if hud is not None:
             hud.draw(packet.frame, roi, obs, out, stats, paused)
             _show(cfg.hud.window_name, packet.frame)
+            notes.after_show(packet.frame, stats)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):  # q or ESC
                 break
@@ -414,6 +460,7 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
         FaceHud(cfg.input_mode, cfg.face, cfg.head, quality, gaze_map) if cfg.hud.enabled else None
     )
     window = _WindowWatch(cfg.hud.window_name)
+    notes = _PreviewNotes(cfg.hud.window_name)
     if hud is not None:
         cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
     stats = LoopStats()
@@ -454,6 +501,7 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
         if hud is not None:
             hud.draw(packet.frame, obs, out, stats, paused)
             _show(cfg.hud.window_name, packet.frame)
+            notes.after_show(packet.frame, stats)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
