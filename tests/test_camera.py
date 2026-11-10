@@ -161,6 +161,61 @@ def test_a_camera_slow_everywhere_keeps_the_largest_size(
     assert "slow in every mode" in caplog.text
 
 
+class FlakyReopen:
+    """A camera factory like a real driver. The first ``failures`` opens after the very first
+    one fail (not opened, or opened but without a frame), and sizes in ``refuse`` never open.
+    Every capture has the speed of its size."""
+
+    def __init__(
+        self,
+        frame_times: dict[int, float],
+        failures: int = 0,
+        how: str = "closed",
+        refuse: tuple[int, ...] = (),
+    ) -> None:
+        self.frame_times, self.failures, self.how, self.refuse = frame_times, failures, how, refuse
+        self.opens = 0
+
+    def __call__(self, cfg: CameraConfig) -> FakeCapture:
+        self.opens += 1
+        cap = SizedCapture(self.frame_times)
+        failing = self.opens > 1 and (self.opens <= 1 + self.failures or cfg.width in self.refuse)
+        if failing and self.how == "closed":
+            cap.opened = False
+        elif failing:
+            cap.read = lambda: (False, None)  # type: ignore[method-assign]
+        return cap
+
+
+@pytest.mark.parametrize("how", ["closed", "no frame"])
+def test_a_reopen_that_fails_the_first_time_is_retried(
+    how: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window must never stay empty because the driver was not ready to open the camera
+    again right after it was released."""
+    monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
+    monkeypatch.setattr("src.camera.REOPEN_DELAY", 0.01)
+    factory = FlakyReopen({1920: 1 / 8, 1280: 1 / 100, 640: 1 / 100}, failures=1, how=how)
+    cam = ThreadedCamera(CameraConfig(mirror=False), factory, fps_probe_frames=4)
+    with caplog.at_level("WARNING"), cam:
+        assert cam.frame_size == (1280, 720)
+        assert cam.read(timeout=1.0) is not None
+
+
+def test_a_camera_that_cannot_be_reopened_at_a_smaller_size_keeps_working(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Smaller sizes refuse to open (every attempt), the original size comes back."""
+    monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
+    monkeypatch.setattr("src.camera.REOPEN_DELAY", 0.01)
+    times = {1920: 1 / 8, 1280: 1 / 100, 640: 1 / 100}
+    factory = FlakyReopen(times, refuse=(1280, 640))
+    cam = ThreadedCamera(CameraConfig(mirror=False), factory, fps_probe_frames=4)
+    with cam:
+        assert cam.frame_size == (1920, 1080)
+        assert cam.read(timeout=1.0) is not None
+
+
 def test_fast_cameras_and_explicit_sizes_are_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
     with sized_camera({1920: 1 / 100, 1280: 1 / 100, 640: 1 / 100}) as cam:

@@ -78,6 +78,8 @@ def open_capture(cfg: CameraConfig) -> CaptureLike:
 
 FALLBACK_SIZES: tuple[tuple[int, int], ...] = ((1280, 720), (640, 480))
 WARMUP_FRAMES = 5  # the first frames are slow while the sensor and the exposure settle
+REOPEN_ATTEMPTS = 3  # opening again right after a release often fails the first time
+REOPEN_DELAY = 0.4  # s between those attempts
 
 
 def measure_fps(cap: CaptureLike, frames: int = 15, max_seconds: float = 1.5) -> float | None:
@@ -158,24 +160,44 @@ class ThreadedCamera:
             raise RuntimeError(f"Camera {cfg.device_id} opened but delivered no frame")
         return cap, frame
 
+    def _reopen(self, cfg: CameraConfig) -> tuple[CaptureLike, npt.NDArray[Any]] | None:
+        """Open the camera again right after releasing it. Drivers (DirectShow, V4L2) often
+        refuse or deliver nothing for a moment after a release, so try a few times."""
+        for attempt in range(REOPEN_ATTEMPTS):
+            if attempt:
+                time.sleep(REOPEN_DELAY)
+            try:
+                return self._open(cfg)
+            except RuntimeError as exc:
+                log.debug("Reopening the camera at %dx%d failed: %s", cfg.width, cfg.height, exc)
+        return None
+
     def _usable_mode(
         self, cap: CaptureLike, frame: npt.NDArray[Any]
     ) -> tuple[CaptureLike, npt.NDArray[Any]]:
         """Keep the requested mode if it is fast enough; otherwise take the first smaller size
-        that is, or failing that the fastest one."""
+        that is, or failing that the fastest one. Never leaves the app without a camera that
+        worked: if a smaller size cannot be opened, the previous one is opened again."""
         cfg = self._cfg
         fps = measure_fps(cap, self._fps_probe_frames)
         if fps is None or fps >= cfg.min_fps:
             return cap, frame
         height, width = frame.shape[:2]
         tried: list[tuple[float, CameraConfig]] = [(fps, cfg)]
+        # What is open right now: (config, capture, frame); None after a release.
+        current: tuple[CameraConfig, CaptureLike, npt.NDArray[Any]] | None = (cfg, cap, frame)
         for size in FALLBACK_SIZES:
             if size[0] >= width:
                 continue
             trial = replace(cfg, width=size[0], height=size[1], open_settings=False)
-            cap.release()
-            cap, frame = self._open(trial)
-            trial_fps = measure_fps(cap, self._fps_probe_frames)
+            if current is not None:
+                current[1].release()
+            opened = self._reopen(trial)
+            if opened is None:
+                current = None
+                continue
+            current = (trial, *opened)
+            trial_fps = measure_fps(opened[0], self._fps_probe_frames)
             if trial_fps is None:
                 continue
             tried.append((trial_fps, trial))
@@ -186,23 +208,36 @@ class ThreadedCamera:
                     fps,
                     width,
                     height,
-                    frame.shape[1],
-                    frame.shape[0],
+                    opened[1].shape[1],
+                    opened[1].shape[0],
                     trial_fps,
                 )
-                return cap, frame
-        # Nothing is fast enough (dim light: the camera exposes longer at every size).
-        best_fps, best = max(tried, key=lambda item: (round(item[0]), item[1].width))
-        cap.release()
-        cap, frame = self._open(replace(best, open_settings=False))
+                return opened
+        # Nothing is fast enough (dim light: the camera exposes longer at every size). Take the
+        # largest size that is about as fast as the fastest (measurements wobble by 10%).
+        top = max(f for f, _ in tried)
+        best_fps, best = max(
+            ((f, c) for f, c in tried if f >= 0.85 * top), key=lambda item: item[1].width
+        )
         log.warning(
             "Camera is slow in every mode (best: %.0f FPS at %dx%d). More light usually helps: "
             "webcams lower their frame rate to expose longer.",
             best_fps,
-            frame.shape[1],
-            frame.shape[0],
+            best.width,
+            best.height,
         )
-        return cap, frame
+        if current is not None and current[0] == best:
+            return current[1], current[2]
+        if current is not None:
+            current[1].release()
+        for config in (replace(best, open_settings=False), cfg):
+            opened = self._reopen(config)
+            if opened is not None:
+                return opened
+        raise RuntimeError(
+            f"Camera {cfg.device_id} could not be opened again after trying smaller sizes. "
+            "Run with --width and --height to keep one size, or try --probe-camera."
+        )
 
     def stop(self) -> None:
         self._stop.set()

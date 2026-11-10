@@ -317,6 +317,7 @@ parameters are in `config.py`.
 | **Head:** arrows fire too easily | `HeadConfig.yaw_threshold` / `pitch_threshold` ↑ |
 | **Head:** quick turns are missed | `gesture_time` ↑ (e.g. 0.8) or the thresholds ↓ |
 | **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode (a slow Full HD mode is replaced automatically) |
+| **Any mode:** the preview is black or does not appear | `python main.py --probe-camera` shows what the camera delivers; `--width 1280 --height 720` keeps one size (the automatic size change is off then); `--camera-id 1` tries another camera; close other programs that use the camera |
 | **Linux:** clicks and keys get lost, the cursor moves only over some windows | the session is Wayland (the log says so): log in with an X11 / Xorg session |
 
 ## Limitations
