@@ -134,7 +134,7 @@ class SizedCapture(FakeCapture):
 
 
 def sized_camera(frame_times: dict[int, float], **cfg: Any) -> ThreadedCamera:
-    config = CameraConfig(mirror=False, **cfg)
+    config = CameraConfig(mirror=False, **{"auto_fallback": True, **cfg})
     return ThreadedCamera(config, lambda _cfg: SizedCapture(frame_times), fps_probe_frames=4)
 
 
@@ -196,7 +196,8 @@ def test_a_reopen_that_fails_the_first_time_is_retried(
     monkeypatch.setattr("src.camera.WARMUP_FRAMES", 1)
     monkeypatch.setattr("src.camera.REOPEN_DELAY", 0.01)
     factory = FlakyReopen({1920: 1 / 8, 1280: 1 / 100, 640: 1 / 100}, failures=1, how=how)
-    cam = ThreadedCamera(CameraConfig(mirror=False), factory, fps_probe_frames=4)
+    config = CameraConfig(mirror=False, auto_fallback=True)
+    cam = ThreadedCamera(config, factory, fps_probe_frames=4)
     with caplog.at_level("WARNING"), cam:
         assert cam.frame_size == (1280, 720)
         assert cam.read(timeout=1.0) is not None
@@ -210,7 +211,8 @@ def test_a_camera_that_cannot_be_reopened_at_a_smaller_size_keeps_working(
     monkeypatch.setattr("src.camera.REOPEN_DELAY", 0.01)
     times = {1920: 1 / 8, 1280: 1 / 100, 640: 1 / 100}
     factory = FlakyReopen(times, refuse=(1280, 640))
-    cam = ThreadedCamera(CameraConfig(mirror=False), factory, fps_probe_frames=4)
+    config = CameraConfig(mirror=False, auto_fallback=True)
+    cam = ThreadedCamera(config, factory, fps_probe_frames=4)
     with cam:
         assert cam.frame_size == (1920, 1080)
         assert cam.read(timeout=1.0) is not None

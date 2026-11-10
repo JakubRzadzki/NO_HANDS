@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -276,7 +277,8 @@ def test_probe_camera_flag_prints_the_measured_modes(
 
 def test_an_explicit_camera_size_is_kept() -> None:
     parse = main.build_parser().parse_args
-    assert main.config_from_args(parse([])).camera.auto_fallback
+    # Off on Windows (DirectShow does not reopen reliably), on elsewhere.
+    assert main.config_from_args(parse([])).camera.auto_fallback == (sys.platform != "win32")
     assert not main.config_from_args(
         parse(["--width", "1280", "--height", "720"])
     ).camera.auto_fallback

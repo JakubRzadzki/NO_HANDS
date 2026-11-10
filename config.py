@@ -7,6 +7,7 @@ hand 30 cm or 1 m from the camera, and for small or large hands.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 
 MODEL_URL = (
@@ -39,7 +40,9 @@ class CameraConfig:
     # deliver Full HD only uncompressed, at 5-10 FPS (common on Linux). When the measured rate
     # is below min_fps, smaller sizes are tried and the first usable one is taken. Off when a
     # size is given on the command line.
-    auto_fallback: bool = True
+    # Off on Windows: DirectShow does not always deliver frames after the camera is released and
+    # opened again, and the window stayed empty. --width / --height turn it off everywhere.
+    auto_fallback: bool = sys.platform != "win32"
     min_fps: float = 20.0
 
 
