@@ -300,6 +300,7 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 | `--camera-id N` | camera index (default 0) |
 | `--width/--height/--fps` | requested camera mode (default 1920×1080@60; the camera may deliver less) |
 | `--probe-camera` | measure which modes the camera really delivers, suggest the best, exit |
+| `--camera-test` | show only the camera picture in the preview window (no tracking, no input): the first thing to try when the preview shows nothing |
 | `--camera-settings` | Windows: open the camera driver's settings (exposure, low-light compensation) |
 | `--no-hud` | no preview window (less CPU) |
 | `--screen WxH` | manual screen size when auto-detection fails |
@@ -341,7 +342,7 @@ parameters are in `config.py`.
 | **Head:** arrows fire too easily | `HeadConfig.yaw_threshold` / `pitch_threshold` ↑ |
 | **Head:** quick turns are missed | `gesture_time` ↑ (e.g. 0.8) or the thresholds ↓ |
 | **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode (a slow Full HD mode is replaced automatically) |
-| **Any mode:** the preview is black or does not appear | `python main.py --probe-camera` shows what the camera delivers; `--width 1280 --height 720` keeps one size (the automatic size change is off then); `--camera-id 1` tries another camera; close other programs that use the camera |
+| **Any mode:** the preview is black or does not appear | `python main.py --camera-test` shows only the camera. Picture there: the camera and the window work; read the log (`Preview window ... is open`, and a warning if the program is slower than the camera: then `--width 1280 --height 720`). No picture there: `python main.py --probe-camera`, `--camera-id 1`, close other programs that use the camera. The window may also be behind others: it is moved to the front when it opens |
 | **Linux:** clicks and keys get lost, the cursor moves only over some windows | the session is Wayland (the log says so): log in with an X11 / Xorg session |
 
 ## Limitations

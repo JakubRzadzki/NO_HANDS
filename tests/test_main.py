@@ -338,6 +338,20 @@ def _stub_window(monkeypatch: pytest.MonkeyPatch, keys: list[int]) -> list[str]:
     return calls
 
 
+def test_camera_test_shows_the_camera_and_nothing_else(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """--camera-test: no tracking, no input; q quits. It is the first thing to try when the
+    preview shows nothing: it tells the camera from the rest."""
+    monkeypatch.setattr(main, "ThreadedCamera", _FrameCamera)
+    calls = _stub_window(monkeypatch, [-1, -1])
+    with caplog.at_level("INFO"):
+        assert main.main(["--camera-test"]) == 0
+    assert calls.count("show") == 3  # two frames, then q on the third
+    assert "named" in calls and "move" in calls  # the window is put on the screen
+    assert "is open" in caplog.text  # said once, in the log
+
+
 def test_preview_notes_warn_when_the_loop_is_slower_than_the_camera(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

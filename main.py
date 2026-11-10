@@ -81,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="measure which resolutions / frame rates the camera really delivers, then exit",
     )
     p.add_argument(
+        "--camera-test",
+        action="store_true",
+        help="show only the camera picture in the preview window (no tracking, no input)",
+    )
+    p.add_argument(
         "--camera-settings",
         action="store_true",
         help="Windows: open the camera driver's settings (exposure, low-light compensation)",
@@ -252,6 +257,45 @@ def _show(name: str, frame: Any) -> None:
         size = (HUD_DISPLAY_WIDTH, round(height * HUD_DISPLAY_WIDTH / width))
         frame = cv2.resize(frame, size, interpolation=cv2.INTER_LINEAR)
     cv2.imshow(name, frame)
+
+
+def camera_test(cfg: AppConfig) -> int:
+    """Only the camera and the window: no tracking, no mouse, no keys. If this shows your
+    picture, the camera and the preview window work and the problem is somewhere else."""
+    name = cfg.hud.window_name
+    with ThreadedCamera(cfg.camera) as camera:
+        cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+        window = _WindowWatch(name)
+        notes = _PreviewNotes(name)
+        last_seq = -1
+        log.info("Camera test: q / ESC quits. You should see yourself.")
+        while True:
+            packet = camera.read(after_seq=last_seq, timeout=1.0)
+            if packet is None:
+                if not camera.is_running:
+                    log.error("Camera stopped: %s", camera.error or "unknown reason")
+                    cv2.destroyAllWindows()
+                    return 1
+                continue
+            last_seq = packet.seq
+            frame = packet.frame
+            height, width = frame.shape[:2]
+            info = (
+                f"{width}x{height}  {camera.measured_fps:.0f} FPS  "
+                f"brightness {float(frame.mean()):.0f}/255  (q = quit)"
+            )
+            cv2.putText(
+                frame, info, (12, 36), cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 0), 5, cv2.LINE_AA
+            )
+            cv2.putText(
+                frame, info, (12, 36), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA
+            )
+            _show(name, frame)
+            notes.after_show(frame)
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27) or window.closed():
+                break
+    cv2.destroyAllWindows()
+    return 0
 
 
 def print_probe(device_id: int) -> int:
@@ -532,7 +576,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.probe_camera:
         return print_probe(cfg.camera.device_id)
     try:
-        return run(cfg)
+        return camera_test(cfg) if args.camera_test else run(cfg)
     except KeyboardInterrupt:
         log.info("Interrupted, all buttons released.")
         return 130
