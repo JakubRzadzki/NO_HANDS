@@ -17,6 +17,67 @@ hands and the face, and pynput sends the mouse and keyboard input.
 
 Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 
+**Contents:** [What's new](#whats-new) · [Install](#install) · [First run](#first-run) ·
+[All gestures at a glance](#all-gestures-at-a-glance) · [Hand mouse](#hand-mouse-default) ·
+[Media mode](#media-mode) · [Slides](#slides---slides) ·
+[Presenting step by step](#presenting-step-by-step) · [Eyes](#eyes---eyes) ·
+[Head](#head---head) · [Options](#options) · [The preview window](#the-preview-window) ·
+[Tuning and troubleshooting](#tuning-and-troubleshooting) · [Limitations](#limitations) ·
+[How it works](#how-it-works) · [Development](#development)
+
+## What's new
+
+The latest changes, newest first. Each one came from testing with real users, or from a
+problem found while measuring.
+
+- **Precise pointing:** fold the pinky and the cursor moves at half speed; make a V (index +
+  middle out) and it moves at a quarter of the speed. Clicking does not change the speed.
+- **Magnifier:** at quarter speed the system's screen magnifier comes on, so small targets are
+  easy to hit; open the hand and it goes off.
+- **Zoom with two hands:** pinch both hands and pull them apart or together, in the hand mouse
+  and in `--slides`. A second hand that does not pinch changes nothing.
+- **Clicks that are not missed:** a pinch works with the other fingers relaxed (before, one of
+  them had to be straight), and a thumb between index and middle is a left click (before,
+  nothing happened). The horns zoom with half-folded fingers too.
+- **The author's mark** in the corner of every preview window.
+- **`--camera-test`** shows only the camera, and the log says when the preview window opens
+  and when the program is slower than the camera: "no preview" is never a mystery. The window
+  is moved onto the screen and to the front when it opens.
+- **The left button is held while the fingers touch** (it used to be a click after a delay),
+  with pinch thresholds measured on real hands: the button is down 99% of the time it is held,
+  against 57% before.
+- **`--slides` takes careful swipes**, and a quick pinch is "next slide". The hand mouse
+  changes slides with a flick sideways and back.
+- **Linux:** a warning on Wayland, where the mouse and keyboard can be controlled only in some
+  windows, and a smaller camera size when Full HD is too slow (Linux and macOS; on Windows the
+  size is kept, because DirectShow does not always reopen the camera).
+- **Pictures of every gesture** in this README.
+
+## All gestures at a glance
+
+| Mode | Gesture | Does |
+| --- | --- | --- |
+| Hand mouse | open hand | moves the cursor |
+| Hand mouse | thumb + index touching | left button (click, or drag while held) |
+| Hand mouse | two quick pinches | double click |
+| Hand mouse | thumb + middle | right click |
+| Hand mouse | index + middle together, move up / down | scroll |
+| Hand mouse | horns (index + pinky), move up / down | zoom in / out |
+| Hand mouse, `--slides` | both hands pinched, pull apart / together | zoom in / out |
+| Hand mouse | pinky folded | cursor at 50% |
+| Hand mouse | V (index + middle out) | cursor at 25% + magnifier |
+| Hand mouse | open hand flicked sideways and back | previous / next slide |
+| Hand mouse | fist | pause (clutch) |
+| Hand mouse | shaka held 0.6 s | mouse ↔ media mode |
+| Media mode | swipe / turn like a knob / fist | track / volume / play-pause |
+| `--slides` | open hand left / right | previous / next slide |
+| `--slides` | quick pinch | next slide |
+| `--slides` | pinch, move up / down | zoom in / out |
+| `--eyes` | look / blink / wink right / wink left | move / click / right click / scroll mode |
+| `--head` | quick turn / nod | arrow keys |
+| any | both eyes closed 1.5 s (`--eyes`, `--head`), `Ctrl+Alt+P` | pause |
+| any | `Ctrl+Alt+Q`, `q` / `ESC` in the preview | quit |
+
 ## Install
 
 You need Python 3.10 or newer (tested with 3.13) and a webcam.
@@ -202,6 +263,23 @@ zooms with it (up to 400%), and so do browsers and PDF viewers.
 
 The HUD shows the hand's path, the stroke as it happens and whether the hand counts as open.
 
+### Presenting step by step
+
+1. **Before the talk, rehearse without risk:** `python main.py --slides --dry-run`. Every
+   recognised gesture is printed (`[dry-run] tap right`, `zoom`), nothing is sent.
+2. **Start the program before the slide show:** `python main.py --slides`, or
+   `python main.py --slides --no-hud` without the preview window (quit with `Ctrl+Alt+Q`).
+3. **Click into the slide show** so that it has the focus: the arrow keys go to the window
+   that is active. A click into the preview window sends them nowhere.
+4. **Put the preview on the laptop screen**, not on the projector, or turn it off.
+5. **Camera:** at chest or face height, the hand 40–80 cm from it, light from the front.
+6. **On Windows, PowerPoint must not run "as administrator":** Windows blocks keys sent by a
+   program without those rights.
+7. **During the talk:** move the open hand left / right for the slides, pinch to go forward,
+   pinch both hands and pull apart to zoom. Make a fist to move the hand without changing
+   anything, and `Ctrl+Alt+P` pauses everything. Gesture low or with the other hand: a wide,
+   quick sideways movement is a swipe.
+
 ## Eyes (`--eyes`)
 
 A mouse without hands: look where the cursor should go and click with your eyes.
@@ -334,6 +412,24 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 Everything else (thresholds, filters, speeds) is in `config.py`. It is checked at start, and
 inconsistent values are reported by name.
 
+## The preview window
+
+The window shows the camera picture with what the program sees and does:
+- **the hand's landmarks**, and the second hand in magenta when two are in view;
+- **the active box** (hand mouse): the hand inside it covers the whole screen; its colour is the
+  mode (cyan = moving, green = button down / slide changed, yellow = scroll, magenta = zoom,
+  red = clutch, orange = media mode);
+- **lines from the thumb to each fingertip**, coloured by how close the pinch is, and the line
+  between the two pinches during a two-hand zoom;
+- **the panel** (top left): the state, FPS of the program and of the camera, latency, the
+  model's time per frame, the live measurements (pinch distances, finger ratios, cursor speed,
+  eye openness, head angles, gaze accuracy) and the gestures of the mode;
+- **the gaze map** (`--eyes`, bottom right) and **the author's mark** (bottom right).
+
+The log in the terminal says when the window opens, warns when the program processes far
+fewer frames than the camera delivers, and when the camera is slower than asked.
+`--camera-test` shows only the camera picture, its size, FPS and brightness.
+
 ## Tuning and troubleshooting
 
 The HUD shows the measured values live: pinch distances, finger-extension ratios, the slide
@@ -349,7 +445,7 @@ parameters are in `config.py`.
 | **Hand mouse:** the horns do not zoom | fold middle + ring further, or zoom with two hands; `horns_relaxed` (on) accepts half-folded fingers |
 | **Hand mouse:** the cursor slows down on its own | a finger is half folded: open the hand fully; `precision_speeds = (1.0, 1.0, 1.0)` turns precision off |
 | **Hand mouse:** the magnifier does not come on | macOS: enable the Zoom keyboard shortcuts; Linux: GNOME only; or `magnifier = False` |
-| **Any mode:** low FPS with the hand mouse | `--no-two-hands` (the second-hand search costs about as much as the tracking itself) |
+| **Hand mouse / slides:** low FPS in the HUD (`FPS`, not `cam`) | `--no-two-hands` (looking for a second hand costs about as much as the tracking itself) |
 | **Hand mouse:** the button lets go while dragging | `pinch_exit` ↑ (e.g. 0.42), `pinch_release_frames` ↑, `drag_lost_grace` ↑ |
 | **Hand mouse:** the button does not let go | open the fingers further, or `pinch_exit` ↓ (above `pinch_enter`) |
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
@@ -370,7 +466,7 @@ parameters are in `config.py`.
 | **Eyes:** blinks click by accident | `blink_min` ↑ (e.g. 0.45) |
 | **Head:** arrows fire too easily | `HeadConfig.yaw_threshold` / `pitch_threshold` ↑ |
 | **Head:** quick turns are missed | `gesture_time` ↑ (e.g. 0.8) or the thresholds ↓ |
-| **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode (a slow Full HD mode is replaced automatically) |
+| **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode, then `--width 1280 --height 720` (on Linux and macOS a slow Full HD mode is replaced automatically) |
 | **Any mode:** the preview is black or does not appear | `python main.py --camera-test` shows only the camera. Picture there: the camera and the window work; read the log (`Preview window ... is open`, and a warning if the program is slower than the camera: then `--width 1280 --height 720`). No picture there: `python main.py --probe-camera`, `--camera-id 1`, close other programs that use the camera. The window may also be behind others: it is moved to the front when it opens |
 | **Linux:** clicks and keys get lost, the cursor moves only over some windows | the session is Wayland (the log says so): log in with an X11 / Xorg session |
 
@@ -398,8 +494,9 @@ parameters are in `config.py`.
     hand in 48% more frames.
   - A far hand near the frame edge can still be missed.
 - **Hands:** one hand drives the cursor; a second one is only for the two-hand zoom, and
-  only while it pinches. When the hands cross, the tracker may swap them. `--eyes` and `--head` track one face, which must
-  be reasonably large in the frame: sit within about 1 m.
+  only while it pinches. When the hands cross, the tracker may swap them.
+- **Face:** `--eyes` and `--head` track one face, which must be reasonably large in the frame:
+  sit within about 1 m.
 - **Magnifier:** it is the system's, through its keyboard shortcut. If that shortcut is changed
   or switched off (macOS by default), nothing happens. Windows' first `Win` + `+` opens
   Magnifier's small window; it does not take the focus.
@@ -438,22 +535,23 @@ tested without a camera and a display:
 | `main.py` | command line, the main loops, guaranteed release of held buttons and keys |
 | `config.py` | all parameters as dataclasses + consistency validation (e.g. `pinch_enter < pinch_exit`) |
 | `src/camera.py` | a thread that keeps draining the camera and holds only the newest frame; falls back to a smaller size when the camera is too slow; `--probe-camera` |
-| `src/hand_tracker.py` | MediaPipe `HandLandmarker` (VIDEO mode), the second search for far hands, landmarks in isotropic pixel space |
+| `src/hand_tracker.py` | MediaPipe `HandLandmarker` (VIDEO mode), the second search for far hands, the second hand for the two-hand zoom (the cursor keeps following the same hand), landmarks in isotropic pixel space |
 | `src/smoother.py` | 1€ filter for vectors (one shared cutoff frequency for x and y) |
-| `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping |
-| `src/gesture_engine.py` | hand features, debounced posture classification, the pinch button (press / hold / release), right click, scroll, zoom, flick |
+| `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping, precision speed without jumps |
+| `src/gesture_engine.py` | hand features, debounced posture classification, the pinch button (press / hold / release), right click, scroll, zoom, flick, precision speed, magnifier, two-hand mode |
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
 | `src/pinch.py` | the hysteresis latch and the thumb-to-fingertip distance shared by every pinch |
 | `src/two_hands.py` | the zoom with two pinching hands |
 | `src/swipes.py` | swipe detection for `--slides` and the hand mouse's flick: strokes cut out of the hand's motion by speed |
-| `src/slide_gestures.py` | `--slides`: swipes, pinch = next slide, pinch + vertical travel = zoom |
+| `src/slide_gestures.py` | `--slides`: swipes, pinch = next slide, pinch + vertical travel = zoom, two-hand zoom |
 | `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), 3D head pose, gaze features |
 | `src/gaze.py` | head-compensated gaze model, the 3-phase calibration procedure, the fixation filter |
 | `src/calibration_ui.py` | the full-screen calibration window |
+| `docs/make_gesture_images.py` | draws the gesture pictures in `docs/gestures/` |
 | `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, gaze (+ head nudge) or nose pointer, scroll, pause |
 | `src/head_engine.py` | `--head`: head pose in degrees to arrow keys, swipe-like, with hysteresis |
-| `src/os_controller.py` | executes actions, tracks held buttons and keys, `release_all()`, screen size |
-| `src/hud.py` | the preview window: landmarks, mode colours, live measurements, FPS, latency |
+| `src/os_controller.py` | executes actions, tracks held buttons, keys and the magnifier, `release_all()`, screen size |
+| `src/hud.py` | the preview window: landmarks, mode colours, live measurements, FPS, latency, the author's mark (with Polish letters) |
 
 ### Engineering decisions
 
@@ -499,6 +597,21 @@ tested without a camera and a display:
     of the fists and 36% of the V signs (as a thumb + ring double click).
   - With them: every real pinch, and none of the fists, V signs or open hands.
   - Thumb + ring double click is off by default for the same reason; two quick pinches do it.
+- **Precision without a jump.** In absolute mode the cursor normally sits where the hand points.
+  At a lower speed it moves only part of the way, so it ends up elsewhere; switching back to
+  full speed would then jump it across the screen. Instead the gap closes while the hand
+  moves: the cursor moves up to 1.5× (or 0.5×) as fast as the hand until it is back. A still
+  hand never moves the cursor.
+- **The system's magnifier, not our own window.** A magnifier window of our own would need a
+  screen grabber, could steal the focus from the app below, and must never sit under the
+  cursor (it would receive the clicks). The system magnifier follows the mouse, handles
+  multiple monitors and DPI, and is reached through its keyboard shortcut. The program
+  remembers whether it turned it on, and turns it off on exit.
+- **The second hand only when it pinches.** The first version switched to two-hand mode as soon
+  as two hands were in view. On the slides test video a woman holds one hand on her forehead,
+  and no swipe worked any more. Now the second hand counts only while it pinches; while one is
+  in view, a pinch of the cursor hand waits 4 frames, so pinching both at once never clicks
+  first.
 - **1€ filter in screen pixels**, and `beta` depends on the units. Simulation with 2–4 px of
   noise:
   - `beta=0.05` gives ~15 px maximum lag in fast movement and ~1 px jitter at rest;
@@ -566,6 +679,9 @@ Measured per frame on one 2.1 GHz Xeon core (a recent laptop Core i7 is faster):
 
 - **MediaPipe's cost does not depend on the camera resolution:** its networks have a fixed input
   size, and it runs on a single core. A lower resolution saves little time but adds jitter.
+- **Two hands:** looking for a second hand means MediaPipe runs its palm detector on every
+  frame, not only when the hand is lost: 12 → 23 ms per frame (median) on the test video.
+  `--no-two-hands` saves that.
 - **Face landmarker:** 4–6 ms per frame while it is tracking a face.
 - **Far-hand search:** runs only while no hand is found. With no hand in view for a second, it
   runs on every 3rd frame.
@@ -591,6 +707,10 @@ laptop webcams deliver 30 FPS at most, and many give 1920×1080 only at 30 FPS.
 - **Resolution trade-off:** 1920×1080 costs more per frame than 1280×720 (MJPG decoding ~13 ms
   vs ~4 ms on one 2.1 GHz Xeon core, in the camera thread). In return the eye tracker gets 1.5×
   more pixels per eye. Larger frames are shrunk for the preview window only.
+- **Too slow at full size:** on Linux and macOS, when the camera delivers under 20 FPS, the app
+  tries 1280×720 and 640×480 and takes the first fast one. If a smaller size cannot be opened,
+  the original one comes back. On Windows the requested size is kept (DirectShow does not
+  always deliver frames after the camera is opened again); pick one with `--width`/`--height`.
 
 ## Development
 
