@@ -65,20 +65,51 @@ def test_back_to_full_speed_the_cursor_does_not_jump() -> None:
     assert abs(float(d.engine.mapper._offset[0])) < 1.0  # caught up with the hand again
 
 
-def test_the_magnifier_comes_with_the_slowest_speed_and_goes_with_it() -> None:
+def other_v(x: float = 0.25) -> dict[str, Any]:
+    """The other hand (left of the cursor hand) showing a V."""
+    return {"center": (x, 0.55), **VICTORY}
+
+
+def test_the_other_hands_v_turns_the_magnifier_on_and_this_hand_works_as_usual() -> None:
+    """Asked for: the magnifier with the other hand, while this hand keeps moving and clicking
+    at full speed."""
     d = settled()
-    on = d.hold(PINKY_FOLDED, 0.3)
-    assert of(on, Magnify) == []  # one finger folded: slower, no magnifier
-    on = d.hold(VICTORY, 0.3)
+    on = d.hold(OPEN, 0.2, second=other_v())
     assert of(on, Magnify) == [Magnify(True)] and d.outputs[-1].magnifier
-    off = d.hold(OPEN, 0.3)
+    assert d.outputs[-1].speed == 1.0  # the cursor hand is not slowed down
+    moves = d.sweep(OPEN, CENTER, (0.6, 0.55), 0.3, second=other_v())
+    assert len(of(moves, MoveTo)) > 5
+    click = d.hold(pinch("index"), 0.1, center=(0.6, 0.55), second=other_v())
+    click += d.hold(OPEN, 0.3, center=(0.6, 0.55), second=other_v())
+    assert of(click, Press) == [Press("left")] and of(click, Release) == [Release("left")]
+    assert of(moves + click, Magnify) == []  # on all along
+    off = d.hold(OPEN, 0.3, center=(0.6, 0.55), second=left_hand(0.25))  # the V opens
     assert of(off, Magnify) == [Magnify(False)] and not d.outputs[-1].magnifier
 
 
-def test_the_magnifier_goes_off_when_the_hand_is_lost() -> None:
+def test_the_magnifier_goes_off_when_the_other_hand_leaves_and_survives_a_lost_frame() -> None:
     d = settled()
-    d.hold(VICTORY, 0.3)
+    d.hold(OPEN, 0.2, second=other_v())
+    assert of(d.hold(OPEN, 2 / 60), Magnify) == []  # two frames without it: still on
+    assert d.outputs[-1].magnifier
+    assert of(d.hold(OPEN, 0.3), Magnify) == [Magnify(False)]
+
+
+def test_this_hands_v_slows_the_cursor_but_does_not_magnify() -> None:
+    d = settled()
+    actions = d.hold(VICTORY, 0.3)
+    assert d.outputs[-1].speed == 0.25 and of(actions, Magnify) == []
+
+
+def test_the_magnifier_goes_off_when_the_hands_are_lost() -> None:
+    d = settled()
+    d.hold(OPEN, 0.2, second=other_v())
     assert of(d.hold(None, 1.0), Magnify) == [Magnify(False)]
+
+
+def test_the_magnifier_can_be_switched_off() -> None:
+    d = settled(magnifier=False)
+    assert of(d.hold(OPEN, 0.5, second=other_v()), Magnify) == []
 
 
 def test_clicking_in_precision_mode_keeps_the_speed() -> None:

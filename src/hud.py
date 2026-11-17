@@ -248,8 +248,9 @@ class Hud:
             if out.pending_mode is not None:
                 lines.append((f"switching to {out.pending_mode.value}...", 0.45, GRAY))
             if out.mode is Mode.POINTER and out.speed < 1.0:
-                lens = "   magnifier on" if out.magnifier else ""
-                lines.append((f"PRECISION: cursor speed {out.speed:.0%}{lens}", 0.5, GREEN))
+                lines.append((f"PRECISION: cursor speed {out.speed:.0%}", 0.5, GREEN))
+            if out.magnifier:
+                lines.append(("MAGNIFIER on (other hand: V)", 0.5, GREEN))
         if out.media_active:
             lines.append(
                 ("MEDIA MODE: swipe = prev/next, turn = volume, fist = play", 0.45, ORANGE)
@@ -265,11 +266,10 @@ class Hud:
             lines.append(
                 ("flick the open hand sideways and back: previous / next slide", 0.4, GRAY)
             )
-            lines.append(
-                ("fold the pinky: slower   V (index + middle): slowest + magnifier", 0.4, GRAY)
-            )
+            lines.append(("fold the pinky: slower   V (index + middle): slowest", 0.4, GRAY))
             lines.append(("both hands pinched, pull apart / together: zoom", 0.4, GRAY))
             lines.append(("hand turned sideways, move up / down: scroll", 0.4, GRAY))
+            lines.append(("other hand V: magnifier (this hand keeps moving)", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)

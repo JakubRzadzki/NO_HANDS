@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--no-two-hands",
         action="store_true",
-        help="track one hand only: no two-hand zoom, the tracker is about twice as fast",
+        help="track one hand only: no two-hand zoom and no magnifier, the tracker is ~2x as fast",
     )
     p.add_argument(
         "--no-hud",
@@ -156,6 +156,7 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     cfg.hud.enabled = not args.no_hud
     if args.no_two_hands:
         cfg.gesture.two_hand_zoom = False
+        cfg.gesture.magnifier = False  # it is the other hand's gesture
     cfg.hotkeys.enabled = not args.no_hotkeys
     cfg.validate()
     return cfg
@@ -389,10 +390,11 @@ def run(cfg: AppConfig) -> int:
         # release_all is registered after the tracker, so it runs first on *any* exit (normal,
         # exception, Ctrl+C): a mouse button or Ctrl key must never stay held after we are gone.
         if cfg.input_mode in ("hands", "slides"):
-            # Two hands are tracked only for the two-hand zoom: MediaPipe then runs its palm
-            # detector on every frame with one hand in view, which costs some speed.
+            # Two hands are tracked only for the two-hand zoom and the magnifier (the other
+            # hand's gestures): MediaPipe then runs its palm detector on every frame with one
+            # hand in view, which costs some speed.
             tracker_cfg = cfg.tracker
-            if cfg.gesture.two_hand_zoom:
+            if cfg.gesture.two_hand_zoom or cfg.gesture.magnifier:
                 tracker_cfg = replace(tracker_cfg, num_hands=max(2, tracker_cfg.num_hands))
             hands = stack.enter_context(HandTracker(tracker_cfg))
             stack.callback(controller.release_all)

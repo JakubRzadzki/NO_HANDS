@@ -134,6 +134,17 @@ class HandFeatures:
         )
 
 
+def is_v_sign(f: HandFeatures, cfg: GestureConfig) -> bool:
+    """Index and middle straight, ring and pinky folded (the thumb does not matter)."""
+    e, straight, folded = f.extension, cfg.finger_extended_above, cfg.finger_curled_below
+    return (
+        e[Finger.INDEX] > straight
+        and e[Finger.MIDDLE] > straight
+        and e[Finger.RING] < folded
+        and e[Finger.PINKY] < folded
+    )
+
+
 def is_pinch_shape(f: HandFeatures, finger: Finger, cfg: GestureConfig) -> bool:
     """Is the hand shaped like a pinch with this finger, apart from the distance?
 
@@ -201,6 +212,15 @@ class GestureEngine:
         self._speed_candidate = 0
         self._speed_frames = 0
         self._magnify = False  # what we last asked of the system magnifier
+        # The other hand's V, debounced: on after magnifier_confirm_frames, off after
+        # magnifier_release_frames without it (a lost frame must not flash the magnifier).
+        # Fed 0 (V seen) or 1 (not seen).
+        self._lens = HysteresisLatch(
+            0.5,
+            0.5 + 1e-9,
+            confirm_frames=cfg.magnifier_confirm_frames,
+            release_frames=cfg.magnifier_release_frames,
+        )
         self._switch_since: float | None = None
         self._switch_done = False
         self._finger = {
@@ -263,6 +283,7 @@ class GestureEngine:
         if self._magnify:
             actions.append(Magnify(False))
             self._magnify = False
+        self._lens.reset()
         self._speed_level = self._speed_candidate = self._speed_frames = 0
         if self._two is not None:
             self._two.reset()
@@ -304,10 +325,18 @@ class GestureEngine:
             self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
         actions: list[Action] = []
+        # The other hand's V = the magnifier (it changes nothing about this hand).
+        other_v = second is not None and is_v_sign(
+            HandFeatures.from_observation(second, depth_weight=self.cfg.pinch_depth_weight),
+            self.cfg,
+        )
+        self._lens.update(0.0 if other_v else 1.0)
         if self._two is not None and not self._media_active:
             # Both hands pinch at about the same time for a two-hand zoom: with a second hand in
             # view the cursor hand's pinch waits a few frames longer, so it cannot click first.
-            delay = self.cfg.two_hand_click_delay_frames if second is not None else 0
+            # Not while the other hand holds the magnifier's V: that hand is not pinching.
+            zooming_maybe = second is not None and not self._lens.active
+            delay = self.cfg.two_hand_click_delay_frames if zooming_maybe else 0
             for latch in self._pinch.values():
                 latch.confirm_frames = self.cfg.pinch_confirm_frames + delay
             # Only a pinching second hand counts. A held button keeps the hand mouse: a second
@@ -401,15 +430,8 @@ class GestureEngine:
             self._speed_level, self._speed_frames = level, 0
 
     def _magnifier(self) -> list[Action]:
-        """The system magnifier is on at the slowest speed (and stays on during a drag)."""
-        slowest = len(self.cfg.precision_speeds) - 1
-        want = (
-            self.cfg.magnifier
-            and self._mode is Mode.POINTER
-            and (
-                self._speed_level == slowest or (self._magnify and self._left is not LeftState.IDLE)
-            )
-        )
+        """The system magnifier is on while the other hand shows a V."""
+        want = self.cfg.magnifier and self._lens.active
         if want == self._magnify:
             return []
         self._magnify = want

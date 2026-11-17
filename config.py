@@ -150,10 +150,15 @@ class GestureConfig:
     # full speed the gap closes by this fraction of the hand's travel (the cursor moves up to
     # 1.5x / 0.5x as fast as the hand until it is back), so the cursor never jumps.
     precision_catch_up: float = 0.5
-    # Magnifier: the system's screen magnifier (Windows: Magnifier, Win + Plus; macOS: Zoom,
-    # Option + Cmd + 8, must be enabled in Accessibility; Linux GNOME: Super + Alt + 8) comes on
-    # at the slowest precision speed and goes off when the hand opens again.
+    # Magnifier: the other hand - the one that does not move the cursor, the left one for most
+    # people - shows a V (index + middle out, ring + pinky folded), and the system's screen
+    # magnifier is on for as long as it does (Windows: Magnifier, Win + Plus; macOS: Zoom,
+    # Option + Cmd + 8, must be enabled in Accessibility; Linux GNOME: Super + Alt + 8). The
+    # cursor hand meanwhile moves and clicks as usual, at full speed. (It used to be the V of
+    # the cursor hand itself, which then also slowed the cursor to 25%.)
     magnifier: bool = True
+    magnifier_confirm_frames: int = 4  # the V must be seen this many frames to turn it on
+    magnifier_release_frames: int = 8  # ... and be gone this many to turn it off
 
     # Zoom with two hands: pinch thumb + index on both hands and pull them apart (zoom in) or
     # together (zoom out), like two fingers on a touchscreen. While the other hand pinches, the
@@ -367,6 +372,10 @@ class AppConfig:
             (g.pinch_release_frames >= 1, "pinch_release_frames must be >= 1"),
             (g.flick_distance > 0 and g.flick_speed > 0, "flick distance / speed must be > 0"),
             (g.drag_start > 0, "drag_start must be > 0"),
+            (
+                g.magnifier_confirm_frames >= 1 and g.magnifier_release_frames >= 1,
+                "magnifier_confirm_frames / magnifier_release_frames must be >= 1",
+            ),
             (
                 len(g.precision_speeds) == 3 and all(0 < v <= 1 for v in g.precision_speeds),
                 "precision_speeds: three values in (0, 1]",
