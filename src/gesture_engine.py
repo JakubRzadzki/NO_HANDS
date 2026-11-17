@@ -186,13 +186,13 @@ def is_pinch_shape(f: HandFeatures, finger: Finger, cfg: GestureConfig) -> bool:
     """Is the hand shaped like a pinch with this finger, apart from the distance?
 
     The finger reaches for the thumb (bent, not folded), and the hand is open: at least one
-    other finger is straight. A thumb resting on a folded finger - a fist, a V sign, the horns -
-    is not a pinch. Checked on 480 real photos: all the real pinches pass, no fist, V sign or
-    open hand does."""
+    other finger is not folded. A thumb resting on a folded finger - a fist, a V sign, the
+    horns - is not a pinch. Checked on 480 real photos: all the real pinches pass, no fist,
+    V sign or open hand does."""
     if f.extension[finger] < cfg.pinch_min_extension:
         return False
     others = (ratio for other, ratio in f.extension.items() if other is not finger)
-    return any(ratio > cfg.finger_extended_above for ratio in others)
+    return any(ratio > cfg.pinch_other_finger_above for ratio in others)
 
 
 @dataclass
@@ -469,9 +469,14 @@ class GestureEngine:
         # Arbitration: only the clearly closest finger may start a pinch. When the thumb meets
         # the index, the middle fingertip is often close too; without this rule one pinch can
         # fire a left *and* a right click.
-        ranked = sorted(PINCH_FINGERS, key=d.__getitem__)
-        best, runner_up = ranked[0], ranked[1]
-        clear_winner = d[runner_up] - d[best] >= cfg.pinch_ambiguity_margin
+        # The index finger needs no margin: when the thumb is about as close to the index as to
+        # the middle finger, that is the left click people mean. Before, nothing happened at
+        # all, and that was one way clicks got "missed".
+        best = min(PINCH_FINGERS, key=d.__getitem__)
+        if best is not Finger.INDEX and d[Finger.INDEX] - d[best] < cfg.pinch_ambiguity_margin:
+            best = Finger.INDEX
+        runner_up = min((x for x in PINCH_FINGERS if x is not best), key=d.__getitem__)
+        clear_winner = best is Finger.INDEX or d[runner_up] - d[best] >= cfg.pinch_ambiguity_margin
         busy = any(latch.active for latch in self._pinch.values())
 
         rose: dict[Finger, bool] = {}

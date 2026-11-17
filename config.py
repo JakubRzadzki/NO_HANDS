@@ -97,13 +97,19 @@ class GestureConfig:
     pinch_depth_weight: float = 0.5  # 1 = full 3D distance, 0 = distance in the image only
     pinch_confirm_frames: int = 2  # frames in a row needed to engage (rejects glitches)
     pinch_release_frames: int = 3  # frames in a row apart before a held pinch lets go
-    pinch_ambiguity_margin: float = 0.03  # the closest finger must win by at least this much
+    # The closest finger must win by this much. Not needed by the index finger: when the thumb
+    # is about as close to the index as to the middle finger, that is a left click (the click
+    # people mean), and a right click needs the middle finger clearly closest.
+    pinch_ambiguity_margin: float = 0.03
     # A pinch is made with an open hand: the pinching finger reaches for the thumb, bent but not
-    # folded (extension ratio 0.98-1.04 on real pinches, below 0.9 for a folded finger), and at
-    # least one other finger is straight. A thumb resting on a folded finger is not a pinch.
-    # On 480 real photos the first version's rule "fired" on 30% of the fists and 36% of the V
-    # signs; with these two conditions on none of the fists, V signs and open hands.
+    # folded (extension ratio 0.98-1.04 on real pinches, 0.56-0.91 for the fingers of real fists),
+    # and at least one other finger is not folded. A thumb resting on a folded finger is not a
+    # pinch. On 480 real photos the first version's rule "fired" on 30% of the fists and 36% of
+    # the V signs; with these two conditions on none of them.
     pinch_min_extension: float = 0.93
+    # "Not folded": the first version wanted another finger straight (> 1.12), but people relax
+    # the other fingers when they click, and then the click was missed. Real fists: <= 0.99.
+    pinch_other_finger_above: float = 1.05
     # Thumb + ring finger = double click. Off: in a V sign or a relaxed hand the thumb often
     # holds the ring fingertip, and a stray double click skips a slide. Two quick thumb + index
     # pinches are a double click anyway.

@@ -184,12 +184,26 @@ def test_ring_pinch_double_click_is_optional() -> None:
     assert of(actions, Click) == [Click("left", 2)]
 
 
-def test_ambiguous_pinch_does_nothing() -> None:
+def test_a_pinch_between_index_and_middle_is_a_left_click_never_a_right_click() -> None:
+    """Before, a thumb about as close to the index as to the middle finger did nothing at all:
+    one way clicks were "missed". It is the left click people mean; a right click needs the
+    middle finger clearly closest, and one pinch never fires both."""
     pts = hand_points()
     between = (pts[8] + pts[12]) / 2  # thumb tip exactly between index and middle tips
     d = settled()
     actions = d.hold({"thumb_tip": between}, 0.5) + d.hold(OPEN, 0.3)
-    assert of(actions, Click) == [] and of(actions, Press) == []
+    assert of(actions, Press) == [Press("left")] and of(actions, Release) == [Release("left")]
+    assert of(actions, Click) == []  # no right click
+
+
+def test_a_click_with_the_other_fingers_relaxed() -> None:
+    """People relax the other fingers when they click (ratio ~1.09 here). The first rule wanted
+    one of them straight (> 1.12) and missed these clicks."""
+    relaxed = {"curl": {"middle": 0.47, "ring": 0.47, "pinky": 0.47}}
+    d = settled()
+    d.hold(relaxed, 0.3)
+    actions = d.hold({**relaxed, **pinch("index")}, 0.15) + d.hold(relaxed, 0.3)
+    assert of(actions, Press) == [Press("left")] and of(actions, Release) == [Release("left")]
 
 
 def test_pinch_works_at_any_distance_from_camera() -> None:
