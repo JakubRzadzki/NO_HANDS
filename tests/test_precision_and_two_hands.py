@@ -162,9 +162,10 @@ def test_a_resting_second_hand_changes_nothing() -> None:
 def test_a_second_hand_does_not_end_a_drag() -> None:
     d = settled()
     grab = pinch("index")
-    d.hold(grab, 0.4)
+    d.hold(grab, 0.2)
+    d.sweep(grab, CENTER, (0.65, 0.55), 0.3)
     assert d.engine.left_state is LeftState.DRAG
-    actions = d.hold(grab, 0.3, second=left_hand(0.3, grab))
+    actions = d.hold(grab, 0.3, second=left_hand(0.3, grab), center=(0.65, 0.55))
     assert of(actions, Release) == [] and d.engine.left_state is LeftState.DRAG
 
 

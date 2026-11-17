@@ -223,8 +223,8 @@ class GestureEngine:
         self._candidate: Mode | None = None
         self._candidate_frames = 0
         self._left = LeftState.IDLE
-        self._left_t0 = 0.0
-        self._pending_origin: FloatArray | None = None
+        self._pending_origin: FloatArray | None = None  # cursor position at the press
+        self._press_anchor: tuple[float, float] | None = None  # hand (px) at the press / release
         self._cursor_frozen = False
         self._last_right = -math.inf
         self._last_double = -math.inf
@@ -263,6 +263,7 @@ class GestureEngine:
             self._two.reset()
         self._left = LeftState.IDLE
         self._pending_origin = None
+        self._press_anchor = None
         self._cursor_frozen = False
         if self._swipes is not None:
             self._swipes.reset()
@@ -572,27 +573,27 @@ class GestureEngine:
             fell[finger] = before and not latch.active
 
         # Left button: down the moment thumb and index meet, up when they part - held exactly as
-        # long as the pinch, like a finger on a real mouse button. The cursor stays frozen for
-        # the first click_max_hold seconds (or until the hand has clearly moved), so a quick
-        # pinch presses and releases on the same pixel: a clean click, never a micro-drag.
-        # After that the cursor follows the hand with the button still down: a drag.
+        # long as the pinch, like a finger on a real mouse button. The cursor stays where the
+        # press landed until the hand has clearly moved (drag_start palm lengths), however long
+        # the pinch lasts: a still hand always makes a clean click, never a micro-drag. Then
+        # the cursor follows with the button down, starting from where the press landed.
         if rose[Finger.INDEX]:
             actions.append(Press("left"))
             self._left = LeftState.PENDING
-            self._left_t0 = t
             self._pending_origin = self.mapper.target
+            self._press_anchor = f.anchor_px
         elif self._left is not LeftState.IDLE and fell[Finger.INDEX]:
             actions.append(Release("left"))
             if self._left is LeftState.PENDING:
                 self._set_flash("LEFT CLICK", t)
                 self._settle_until = t + cfg.click_settle  # a second pinch = a double click
+                self._press_anchor = f.anchor_px  # the settle ends when the hand moves on
             else:
                 self._set_flash("DROP", t)
             self._left = LeftState.IDLE
-        elif self._left is LeftState.PENDING and (
-            t - self._left_t0 >= cfg.click_max_hold or self._pending_travel() >= cfg.drag_start_px
-        ):
+        elif self._left is LeftState.PENDING and self._hand_travel(f) >= cfg.drag_start:
             self._left = LeftState.DRAG
+            self.mapper.hold_at(self._pending_origin)  # no jump: the drag starts at the press
 
         # Right click fires once per pinch (the latch must release before it can fire again);
         # the cooldown additionally absorbs a pinch that "bounces" through the hysteresis band.
@@ -612,7 +613,7 @@ class GestureEngine:
         # After a click the cursor waits a moment where the click landed, so that a second
         # pinch lands on the same pixel (the OS allows ~4 px between the clicks of a double
         # click) - unless the hand is clearly moving on.
-        settling = t < self._settle_until and self._pending_travel() < cfg.drag_start_px
+        settling = t < self._settle_until and self._hand_travel(f) < cfg.drag_start
         if self._left is LeftState.DRAG:
             frozen = False
         else:
@@ -654,11 +655,14 @@ class GestureEngine:
         self._set_flash("RIGHT >>" if direction == "right" else "<< LEFT", t, 0.6)
         return [KeyTap(direction)]
 
-    def _pending_travel(self) -> float:
-        target = self.mapper.target
-        if self._pending_origin is None or target is None:
+    def _hand_travel(self, f: HandFeatures) -> float:
+        """How far the hand has moved since the press (or the click), in palm lengths: the
+        same on any screen and at any distance from the camera."""
+        if self._press_anchor is None:
             return 0.0
-        return float(np.linalg.norm(target - self._pending_origin))
+        dx = f.anchor_px[0] - self._press_anchor[0]
+        dy = f.anchor_px[1] - self._press_anchor[1]
+        return math.hypot(dx, dy) / f.palm_scale
 
     # -- SCROLL ------------------------------------------------------------------------------
     def _scroll(self, f: HandFeatures, dt: float) -> list[Action]:

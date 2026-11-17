@@ -63,7 +63,7 @@ def test_a_real_pinch_presses_holds_and_releases(hand: dict[str, Any]) -> None:
     held = show(engine, hand, 0.3, 2.0)
     assert [a for a in held if isinstance(a, Press)] == [Press("left")]
     assert not [a for a in held if isinstance(a, Release)]
-    assert engine.left_state is LeftState.DRAG  # button down for the whole 2 s
+    assert engine.left_state is LeftState.PENDING  # button down for the whole 2 s, no drag
     let_go = show(engine, OPEN_HAND, 2.3, 0.3)
     assert [a for a in let_go if isinstance(a, Release)] == [Release("left")]
 

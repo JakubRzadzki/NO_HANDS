@@ -3,6 +3,7 @@ original single-file script (named in the test docstrings)."""
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 import numpy as np
@@ -97,7 +98,7 @@ def test_the_button_is_down_from_the_first_moment_of_the_pinch() -> None:
     assert of(first, Press) == [Press("left")]  # pressed after two confirming frames
     held = d.hold(pinch("index"), 3.0)
     assert of(held, Press) == [] and of(held, Release) == []  # one press, held for 3 s
-    assert d.engine.left_state is LeftState.DRAG
+    assert d.engine.left_state is LeftState.PENDING  # still hand: still a click, not a drag
     assert of(d.hold(OPEN, 0.2), Release) == [Release("left")]
 
 
@@ -114,7 +115,7 @@ def test_a_held_pinch_survives_bad_frames_and_a_wobbling_grip() -> None:
         if i % 41 in (5, 6):
             ratio = 0.50  # two in a row (three would be letting go)
         actions += d.step(pinch("index", ratio)).actions
-    assert of(actions, Release) == [] and d.engine.left_state is LeftState.DRAG
+    assert of(actions, Release) == [] and d.engine.left_state is not LeftState.IDLE
     assert of(d.hold(OPEN, 0.2), Release) == [Release("left")]
 
 
@@ -135,19 +136,38 @@ def test_long_pinch_drags_and_cursor_follows_during_drag() -> None:
     d = settled()
     hold = d.hold(pinch("index"), 0.4)
     assert of(hold, Press) == [Press("left")] and of(hold, Click) == []
-    assert d.engine.left_state is LeftState.DRAG
     drag = d.sweep(pinch("index"), CENTER, (0.65, 0.55), 0.4)
+    assert d.engine.left_state is LeftState.DRAG
     assert len(of(drag, MoveTo)) > 5
     drop = d.hold(OPEN, 0.2, center=(0.65, 0.55))
     assert of(drop, Release) == [Release("left")] and of(drop, Click) == []
 
 
-def test_fast_motion_while_pinched_starts_drag_before_hold_time() -> None:
+def test_a_slow_click_with_a_drifting_hand_stays_a_click() -> None:
+    """Feedback: "the left button keeps turning into drag and select". The drag used to start
+    after 0.25 s or 40 screen px; real clicks take longer, and closing the fingers moves the
+    knuckles that far on a large screen. Now only clear hand travel starts a drag."""
     d = settled()
-    actions = d.sweep(pinch("index"), CENTER, (0.7, 0.55), 0.15)
-    assert of(actions, Press) == [Press("left")]  # 0.15 s < click_max_hold
-    press_at = actions.index(Press("left"))
-    assert any(isinstance(a, MoveTo) for a in actions[press_at:])
+    actions = d.sweep(pinch("index"), CENTER, (0.505, 0.553), 0.6)  # a 0.6 s pinch, ~1 cm drift
+    actions += d.hold(OPEN, 0.3, center=(0.505, 0.553))
+    assert of(actions, Press) == [Press("left")] and of(actions, Release) == [Release("left")]
+    pressed, released = actions.index(Press("left")), actions.index(Release("left"))
+    assert of(actions[pressed:released], MoveTo) == []  # not one pixel of drag
+    assert any(o.label == "LEFT CLICK" for o in d.outputs[-20:])
+
+
+def test_a_drag_starts_where_the_button_went_down() -> None:
+    """The cursor waits at the press while the hand travels the drag threshold; then it follows
+    from there, without jumping ahead by the threshold."""
+    d = settled()
+    d.hold(pinch("index"), 0.2)
+    at_press = d.engine.mapper.target.copy()
+    actions = d.sweep(pinch("index"), CENTER, (0.7, 0.55), 0.5)
+    assert d.engine.left_state is LeftState.DRAG
+    moves = [(m.x, m.y) for m in of(actions, MoveTo)]
+    assert abs(moves[0][0] - at_press[0]) < 40  # the drag's first step leaves from the press
+    steps = [abs(b[0] - a[0]) for a, b in itertools.pairwise(moves)]
+    assert max(steps) < 60  # px per frame at 60 FPS: smooth, no jump
 
 
 def test_hysteresis_prevents_click_chatter() -> None:
@@ -256,7 +276,7 @@ def test_a_pinch_needs_an_open_hand_but_the_hold_does_not() -> None:
     d.hold(OPEN, 0.3)
     assert of(d.hold(pinch("index"), 0.3), Press) == [Press("left")]  # open hand: pressed
     curled = d.hold({**pen, **pinch("index")}, 1.0)  # ... and the other fingers relax
-    assert of(curled, Release) == [] and d.engine.left_state is LeftState.DRAG
+    assert of(curled, Release) == [] and d.engine.left_state is not LeftState.IDLE
     assert of(d.hold(OPEN, 0.2), Release) == [Release("left")]
 
 
@@ -355,10 +375,11 @@ def test_hand_reappearing_already_pinched_needs_a_fresh_pinch() -> None:
 
 def test_short_dropout_keeps_drag_long_dropout_releases() -> None:
     d = settled()
-    d.hold(pinch("index"), 0.4)
+    d.hold(pinch("index"), 0.2)
+    d.sweep(pinch("index"), CENTER, (0.65, 0.55), 0.3)
     assert d.engine.left_state is LeftState.DRAG
-    brief = d.hold(None, 0.4) + d.hold(pinch("index"), 0.2)  # < drag_lost_grace (0.5 s)
-    assert of(brief, Release) == [] and d.engine.left_state is LeftState.DRAG
+    brief = d.hold(None, 0.4) + d.hold(pinch("index"), 0.2, center=(0.65, 0.55))
+    assert of(brief, Release) == [] and d.engine.left_state is LeftState.DRAG  # < 0.5 s lost
     long = d.hold(None, 0.8)
     assert of(long, Release) == [Release("left")]
     assert d.outputs[-1].mode is Mode.NO_HAND

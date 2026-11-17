@@ -160,6 +160,13 @@ class CursorMapper:
         dx, dy = int(step[0]), int(step[1])
         return MoveBy(dx, dy) if (dx or dy) else None
 
+    def hold_at(self, position: FloatArray | None) -> None:
+        """Absolute mode: carry on from ``position`` (where the cursor was held) instead of
+        jumping to where the hand points now. The gap closes as the hand moves (catch_up)."""
+        if self.mode != "absolute" or self._target is None or position is None:
+            return
+        self._offset = np.asarray(position, dtype=np.float64) - self._target
+
     def _absorb(self, delta: FloatArray, speed: float) -> None:
         """Absolute mode: the cursor moves ``speed`` times as far as the hand target."""
         if speed < 1.0:

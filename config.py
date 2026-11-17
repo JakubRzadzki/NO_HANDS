@@ -117,10 +117,13 @@ class GestureConfig:
     approach_freeze: float = 0.33  # freeze the cursor while a pinch is closer than this (0 = off)
 
     # Left button = thumb + index, held exactly as long as the fingers touch: pressed when they
-    # meet, released when they part. The cursor stays put for the first moment so that a quick
-    # pinch is a clean click; after that it follows the hand with the button down (drag).
-    click_max_hold: float = 0.25  # s the cursor stays frozen after the press (a click)
-    drag_start_px: float = 40.0  # ... unless the hand moves this far (screen px): drag at once
+    # meet, released when they part. The cursor stays where the press landed until the hand
+    # clearly moves; only then does it follow with the button down (a drag), starting from
+    # that spot. However long the pinch is held, a still hand makes a click.
+    # (It used to start the drag after 0.25 s or 40 screen px: most real clicks last longer than
+    # that, and closing the fingers alone moves the knuckles by that much on a large screen, so
+    # clicks kept turning into tiny drags and selections.)
+    drag_start: float = 0.35  # palm lengths of hand travel (~3 cm) with the button down
     click_settle: float = (
         0.35  # s the cursor stays put after a click: a second pinch = double click
     )
@@ -359,6 +362,7 @@ class AppConfig:
             (0 <= g.pinch_depth_weight <= 1, "pinch_depth_weight must be in [0, 1]"),
             (g.pinch_release_frames >= 1, "pinch_release_frames must be >= 1"),
             (g.flick_distance > 0 and g.flick_speed > 0, "flick distance / speed must be > 0"),
+            (g.drag_start > 0, "drag_start must be > 0"),
             (
                 len(g.precision_speeds) == 3 and all(0 < v <= 1 for v in g.precision_speeds),
                 "precision_speeds: three values in (0, 1]",
