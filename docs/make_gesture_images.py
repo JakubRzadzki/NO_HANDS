@@ -489,9 +489,23 @@ def build() -> dict[str, Any]:
         h.active |= {"ring", "pinky"}
         h.draw(c)
         badge(c, "25%", (1.35, 1.75))
-        lens(c, (1.35, 0.95))
+        caption(c, "Slowest cursor", "V: ring + pinky folded", "quarter speed, still clicks")
+        return c
+
+    def magnifier() -> Canvas:
+        c = Canvas(0.16, (0.0, 0.0))
+        left = Hand().up("index", 9).up("middle", -7).curl("ring").curl("pinky").thumb_tuck()
+        left.active |= {"index", "middle"}
+        left.mirror, left.shift = True, (-1.15, 0.0)
+        right = open_hand()
+        right.shift = (0.75, 0.0)
+        for h in (left, right):
+            h.draw(c)
+        lens(c, (-1.15, 2.45))
+        arrow(c, (0.95, 2.3), (1.75, 2.3))
+        arrow(c, (0.95, 2.3), (0.15, 2.3))
         caption(
-            c, "Precision + magnifier", "V: ring + pinky folded", "quarter speed, screen magnified"
+            c, "Magnifier", "other hand: V = magnifier on", "this hand moves and clicks as usual"
         )
         return c
 
@@ -512,6 +526,7 @@ def build() -> dict[str, Any]:
     pics.update(
         hand_slower=slower,
         hand_precision=precision,
+        hand_magnifier=magnifier,
         hand_two_zoom=two_hands,
         hand_move=move,
         hand_left_button=left_button,
