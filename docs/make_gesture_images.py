@@ -102,6 +102,8 @@ class Hand:
         self.thumb: list[Point] = []
         self.thumb_front = False  # the thumb lies over the fingers (fist)
         self.angle = 0.0  # the whole hand turned by this many degrees (counter-clockwise)
+        self.mirror = False  # the other hand (thumb on the other side)
+        self.shift: Point = (0.0, 0.0)  # palm lengths
 
     def up(self, name: str, spread: float = 0.0) -> Hand:
         self.chains[name] = fk(MCP[name], LENGTHS[name], (spread, spread, spread))
@@ -135,7 +137,13 @@ class Hand:
     # -- drawing -----------------------------------------------------------------------------
     def _rotated(self, p: Point) -> Point:
         a = math.radians(self.angle)
-        return (p[0] * math.cos(a) - p[1] * math.sin(a), p[0] * math.sin(a) + p[1] * math.cos(a))
+        x, y = (-p[0] if self.mirror else p[0]), p[1]
+        x, y = x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a)
+        return x + self.shift[0], y + self.shift[1]
+
+    def at(self, p: Point) -> Point:
+        """A point of this hand (model space) where it is drawn."""
+        return self._rotated(p)
 
     def draw(self, c: Canvas) -> None:
         palm = [(-0.34, 0.0), (0.30, 0.0), (0.40, 0.3), (0.40, 0.92), (-0.46, 0.86), (-0.46, 0.3)]
@@ -221,6 +229,16 @@ def arc(
     cv2.arrowedLine(c.img, pts[-4], pts[-1], MOVE, 7 * SS, cv2.LINE_AA, tipLength=1.2)
 
 
+def lens(c: Canvas, centre: Point) -> None:
+    """A magnifying glass."""
+    x, y = c.px(centre)
+    r = c.r(0.2)
+    cv2.circle(c.img, (x, y), r, MOVE, 6 * SS, cv2.LINE_AA)
+    end = (x + round(r * 1.6), y + round(r * 1.6))
+    start = (x + round(r * 0.72), y + round(r * 0.72))
+    cv2.line(c.img, start, end, MOVE, 9 * SS, cv2.LINE_AA)
+
+
 def touch(c: Canvas, p: Point) -> None:
     x, y = c.px(p)
     cv2.circle(c.img, (x, y), c.r(0.13), TOUCH, 5 * SS, cv2.LINE_AA)
@@ -229,7 +247,8 @@ def touch(c: Canvas, p: Point) -> None:
 def badge(c: Canvas, s: str, centre: Point) -> None:
     x, y = c.px(centre)
     cv2.circle(c.img, (x, y), 40 * SS, MOVE, -1, cv2.LINE_AA)
-    font, scale, th = cv2.FONT_HERSHEY_DUPLEX, 1.3 * SS, 3 * SS
+    font, th = cv2.FONT_HERSHEY_DUPLEX, 3 * SS
+    scale = (1.3 if len(s) <= 2 else 0.95) * SS
     (w, h), _ = cv2.getTextSize(s, font, scale, th)
     cv2.putText(c.img, s, (x - w // 2, y + h // 2), font, scale, (255, 255, 255), th, cv2.LINE_AA)
 
@@ -429,7 +448,45 @@ def build() -> dict[str, Any]:
         caption(c, "Zoom in / out", "pinch thumb + index, hold,", "move up = in, down = out")
         return c
 
+    def slower() -> Canvas:
+        c = Canvas()
+        h = Hand().up("index", 5).up("middle", 1).up("ring", -3).curl("pinky").thumb_out()
+        h.active |= {"pinky"}
+        h.draw(c)
+        badge(c, "50%", (1.35, 1.75))
+        caption(c, "Slower cursor", "fold the pinky: half speed", "for small targets")
+        return c
+
+    def precision() -> Canvas:
+        c = Canvas()
+        h = Hand().up("index", 9).up("middle", -7).curl("ring").curl("pinky").thumb_tuck()
+        h.active |= {"ring", "pinky"}
+        h.draw(c)
+        badge(c, "25%", (1.35, 1.75))
+        lens(c, (1.35, 0.95))
+        caption(
+            c, "Precision + magnifier", "V: ring + pinky folded", "quarter speed, screen magnified"
+        )
+        return c
+
+    def two_hands() -> Canvas:
+        c = Canvas(0.16, (0.0, 0.0))
+        right = pinch_hand()
+        right.shift = (0.95, 0.0)
+        left = pinch_hand()
+        left.mirror, left.shift = True, (-0.95, 0.0)
+        for h in (left, right):
+            h.draw(c)
+            touch(c, h.at(h.tip("index")))
+        arrow(c, (-0.35, 2.45), (-1.9, 2.45))
+        arrow(c, (0.35, 2.45), (1.9, 2.45))
+        caption(c, "Zoom with two hands", "pinch both, pull apart = zoom in", "together = zoom out")
+        return c
+
     pics.update(
+        hand_slower=slower,
+        hand_precision=precision,
+        hand_two_zoom=two_hands,
         hand_move=move,
         hand_left_button=left_button,
         hand_drag=drag,
