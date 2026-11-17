@@ -30,6 +30,10 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **A click stays a click:** the drag starts only when the hand clearly moves (~3 cm), never
+  because the pinch lasted long, and it starts from where the button went down. Before, every
+  pinch longer than 0.25 s or a 40-pixel drift (closing the fingers moves the knuckles that
+  far on a big screen) turned into a drag or a selection.
 - **Precise pointing:** fold the pinky and the cursor moves at half speed; make a V (index +
   middle out) and it moves at a quarter of the speed. Clicking does not change the speed.
 - **Magnifier:** at quarter speed the system's screen magnifier comes on, so small targets are
@@ -157,7 +161,7 @@ released.
 | Move cursor | open hand | anchored on the knuckles (LM 5+9), not a fingertip; 1€ filter |
 | Left button | **thumb + index** touching | the button is down for exactly as long as the fingers touch |
 | Click | touch and let go | the cursor stays frozen while pinching, so the click lands where you aimed |
-| Drag, select, draw | touch, keep touching and move | the cursor follows after 0.25 s or 40 px of movement, button still down |
+| Drag, select, draw | touch, keep touching and move | the drag starts once the hand has moved ~3 cm (0.35 palm lengths), from where the button went down; a still hand is always a click, however long the pinch |
 | Double click | two quick pinches | the cursor waits 0.35 s after a click, so both land on the same pixel |
 | Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
 | Previous / next slide | **flick** the open hand left / right **and straight back** | Left / Right arrow; the cursor ends where it was |
@@ -449,6 +453,8 @@ parameters are in `config.py`.
 | **Hand mouse:** the button lets go while dragging | `pinch_exit` ↑ (e.g. 0.42), `pinch_release_frames` ↑, `drag_lost_grace` ↑ |
 | **Hand mouse:** the button does not let go | open the fingers further, or `pinch_exit` ↓ (above `pinch_enter`) |
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
+| **Hand mouse:** clicks select text or drag things | `GestureConfig.drag_start` ↑ (e.g. 0.5 palm lengths) |
+| **Hand mouse:** a drag takes too much hand travel to start | `drag_start` ↓ (e.g. 0.25) |
 | **Hand mouse:** the flick does not change the slide | bring the hand straight back; `flick_distance` ↓, `flick_speed` ↓ |
 | **Hand mouse:** slides change while pointing or talking | `flick_distance` ↑, `flick_speed` ↑, or `flick_slides = False` |
 | **Hand mouse:** cursor stops when the thumb rests near a finger | `approach_freeze` ↓ (0 disables freezing) |
@@ -584,8 +590,14 @@ tested without a camera and a display:
     second, and a single wild frame does not let go (it takes three in a row).
 - **The left button is a button.** It used to go down only after 0.25 s of holding, and a
   shorter pinch became a synthetic click. Now it is pressed when the fingers meet and released
-  when they part. The cursor stays frozen for the first moment, so a quick pinch is still one
-  clean click on one pixel.
+  when they part. The cursor stays where the press landed until the hand clearly moves.
+- **Click or drag is decided by hand travel, not by time.** The first rule started the drag
+  after 0.25 s or 40 screen pixels. Real clicks last longer than that (the pinch must also be
+  seen for 2 frames and let go for 3), and on a large screen closing the fingers alone moves
+  the knuckles by 40 px: clicks kept turning into small drags and text selections. Now only
+  0.35 palm lengths of hand travel (~3 cm, the same on any screen and at any distance) starts
+  a drag, and the cursor then leaves from where the button went down instead of jumping ahead
+  by those 3 cm.
 - **What a pinch looks like, from 480 real photos.** The pinching finger reaches for the
   thumb: bent, not folded (extension ratio 0.98–1.04, against < 0.9 for a folded finger), and
   another finger is not folded (> 1.05; the fingers of real fists are ≤ 0.99).
