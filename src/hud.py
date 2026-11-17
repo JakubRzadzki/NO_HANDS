@@ -228,6 +228,14 @@ class Hud:
             )
             ext = "/".join(f"{out.features.extension[finger]:.2f}" for finger in Finger)
             lines.append((f"extended {fingers}  ({ext})", 0.45, WHITE))
+            lines.append(
+                (
+                    f"palm width {out.features.palm_width:.2f}  "
+                    f"(scroll below {g.scroll_palm_enter:.2f}: hand turned sideways)",
+                    0.45,
+                    WHITE,
+                )
+            )
             if out.mode is Mode.SCROLL:
                 rx, ry = out.scroll_rate
                 lines.append((f"scroll rate x {rx:+.1f}  y {ry:+.1f} ticks/s", 0.45, YELLOW))
@@ -261,6 +269,7 @@ class Hud:
                 ("fold the pinky: slower   V (index + middle): slowest + magnifier", 0.4, GRAY)
             )
             lines.append(("both hands pinched, pull apart / together: zoom", 0.4, GRAY))
+            lines.append(("hand turned sideways, move up / down: scroll", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)

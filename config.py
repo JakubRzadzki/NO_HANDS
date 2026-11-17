@@ -165,10 +165,14 @@ class GestureConfig:
     # both hands pinch at about the same time, and the first must not click meanwhile.
     two_hand_click_delay_frames: int = 4
 
-    # Scroll: index + middle extended and touching, ring + pinky curled. Works like a joystick:
-    # displacement from where the gesture started sets the scroll *speed*.
-    scroll_join_enter: float = 0.28  # index tip <-> middle tip
-    scroll_join_exit: float = 0.36
+    # Scroll: the whole hand turned sideways, its edge to the camera ("karate chop"), then moved
+    # up / down. Works like a joystick: displacement from where the gesture started sets the
+    # scroll *speed*. Measured as the palm's width (index knuckle -> pinky knuckle) over its
+    # length: 0.62-1.12 on real hands facing the camera (0.38 for one pinching hand), about
+    # 0.1-0.25 edge on. (Scroll used to be index + middle together, which the precision V kept
+    # turning into.)
+    scroll_palm_enter: float = 0.25  # narrower than this = turned sideways = scroll
+    scroll_palm_exit: float = 0.35
     scroll_deadzone: float = 0.15  # palm lengths of travel before scrolling starts
     scroll_gain: float = 30.0  # wheel ticks per second, per palm length beyond the dead zone
     scroll_max_rate: float = 40.0  # ticks per second
@@ -382,8 +386,8 @@ class AppConfig:
                 "need finger_curled_below < finger_extended_above",
             ),
             (
-                0 < g.scroll_join_enter < g.scroll_join_exit,
-                "need 0 < scroll_join_enter < scroll_join_exit",
+                0 < g.scroll_palm_enter < g.scroll_palm_exit,
+                "need 0 < scroll_palm_enter < scroll_palm_exit",
             ),
             (g.pinch_confirm_frames >= 1, "pinch_confirm_frames must be >= 1"),
             (g.posture_confirm_frames >= 1, "posture_confirm_frames must be >= 1"),

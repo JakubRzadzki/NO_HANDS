@@ -4,7 +4,8 @@ Per frame:
 
 1. Features - dimensionless measurements: pinch ratios, finger-extension ratios.
 2. Posture  - which mode the hand asks for (POINTER / SCROLL / ZOOM / CLUTCH), debounced over a
-              few frames so one misdetected frame cannot switch modes.
+              few frames so one misdetected frame cannot switch modes. SCROLL is the whole hand
+              turned sideways, edge to the camera.
 3. Mode     - POINTER runs the pinch latches (click, drag, right click, double click);
               SCROLL and ZOOM turn hand motion into wheel ticks; CLUTCH does nothing.
 4. Cursor   - the CursorMapper turns the anchor (knuckles, not fingertips) into a move unless
@@ -30,8 +31,10 @@ from src.hand_tracker import (
     MIDDLE_MCP,
     MIDDLE_PIP,
     MIDDLE_TIP,
+    PINKY_MCP,
     PINKY_PIP,
     PINKY_TIP,
+    RING_MCP,
     RING_PIP,
     RING_TIP,
     THUMB_TIP,
@@ -93,10 +96,10 @@ class HandFeatures:
     palm_scale: float  # px
     pinch: dict[Finger, float]  # thumb tip <-> finger tip, palm lengths
     extension: dict[Finger, float]  # dist(wrist, tip) / dist(wrist, pip)
-    index_middle_gap: float  # index tip <-> middle tip, palm lengths
+    palm_width: float  # index knuckle <-> pinky knuckle in the image, palm lengths
     anchor: tuple[float, float]  # cursor anchor, normalized frame coordinates
     anchor_px: tuple[float, float]  # the same anchor in px (zoom measures its travel)
-    scroll_point: tuple[float, float]  # px, midpoint of the index and middle tips
+    scroll_point: tuple[float, float]  # px, centre of the palm (the whole hand scrolls)
 
     @classmethod
     def from_observation(
@@ -117,12 +120,14 @@ class HandFeatures:
         w = anchor_index_weight
         anchor = w * obs.norm[INDEX_MCP, :2] + (1.0 - w) * obs.norm[MIDDLE_MCP, :2]
         anchor_px = w * obs.px[INDEX_MCP, :2] + (1.0 - w) * obs.px[MIDDLE_MCP, :2]
-        scroll_point = (obs.px[INDEX_TIP, :2] + obs.px[MIDDLE_TIP, :2]) / 2.0
+        scroll_point = obs.px[[WRIST, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP], :2].mean(axis=0)
+        # In the image only: turned sideways, the knuckles line up one behind the other.
+        knuckles = obs.px[INDEX_MCP, :2] - obs.px[PINKY_MCP, :2]
         return cls(
             palm_scale=obs.palm_scale,
             pinch=pinch,
             extension=extension,
-            index_middle_gap=obs.ndist(INDEX_TIP, MIDDLE_TIP),
+            palm_width=float(math.hypot(knuckles[0], knuckles[1])) / obs.palm_scale,
             anchor=(float(anchor[0]), float(anchor[1])),
             anchor_px=(float(anchor_px[0]), float(anchor_px[1])),
             scroll_point=(float(scroll_point[0]), float(scroll_point[1])),
@@ -204,7 +209,7 @@ class GestureEngine:
             )
             for finger in Finger
         }
-        self._joined = HysteresisLatch(cfg.scroll_join_enter, cfg.scroll_join_exit)
+        self._sideways = HysteresisLatch(cfg.scroll_palm_enter, cfg.scroll_palm_exit)
         self._pinch = {
             finger: HysteresisLatch(
                 cfg.pinch_enter,
@@ -267,7 +272,7 @@ class GestureEngine:
         self._cursor_frozen = False
         if self._swipes is not None:
             self._swipes.reset()
-        for latch in (*self._pinch.values(), *self._finger.values(), self._joined):
+        for latch in (*self._pinch.values(), *self._finger.values(), self._sideways):
             latch.reset()
         self._armed = dict.fromkeys(PINCH_FINGERS, False)
         self._mode = Mode.NO_HAND
@@ -294,7 +299,7 @@ class GestureEngine:
             obs, self._anchor_weight, self.cfg.pinch_depth_weight
         )
         extended = {f: latch.update(features.extension[f]) for f, latch in self._finger.items()}
-        joined = self._joined.update(features.index_middle_gap)
+        sideways = self._sideways.update(features.palm_width)
         if self._mode is Mode.NO_HAND:  # hand (re)acquired
             self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
@@ -315,7 +320,7 @@ class GestureEngine:
         # An engaged pinch owns the hand: curling the other fingers mid-drag must not turn the
         # pose into a "fist" (clutch) and drop whatever is being dragged.
         if self._left is LeftState.IDLE:
-            raw = self._classify(extended, joined, features)
+            raw = self._classify(extended, sideways, features)
             if self._media_active and raw is not Mode.SWITCH:
                 raw = Mode.MEDIA  # media mode reads every other pose itself
         else:
@@ -473,12 +478,15 @@ class GestureEngine:
         return EngineOutput(Mode.NO_HAND, "NO HAND", actions, media_active=self._media_active)
 
     # -- posture -----------------------------------------------------------------------------
-    def _classify(self, ext: dict[Finger, bool], joined: bool, f: HandFeatures) -> Mode:
+    def _classify(self, ext: dict[Finger, bool], sideways: bool, f: HandFeatures) -> Mode:
         i, m, r, p = (ext[Finger.INDEX], ext[Finger.MIDDLE], ext[Finger.RING], ext[Finger.PINKY])
         if not (i or m or r or p):
             # A fist, wherever the thumb is: in a quarter of real fists its tip lies right next
             # to the folded index tip, which must not count as a pinch.
             return Mode.CLUTCH
+        if sideways and i + m + r + p >= 2:
+            # The whole hand turned sideways: scroll. (A fist turned sideways is still a fist.)
+            return Mode.SCROLL
         if p and not (i or m or r):
             return Mode.SWITCH  # shaka: only the pinky (and the thumb) out
         if i and p and not m and not r:
@@ -491,8 +499,6 @@ class GestureEngine:
             straight = self.cfg.finger_extended_above
             if max(e[Finger.MIDDLE], e[Finger.RING]) < min(straight, low):
                 return Mode.ZOOM
-        if i and m and not r and not p and joined:
-            return Mode.SCROLL
         return Mode.POINTER
 
     def _debounce(self, raw: Mode) -> Mode | None:

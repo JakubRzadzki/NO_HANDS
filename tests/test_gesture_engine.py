@@ -26,6 +26,7 @@ from tests.handgen import (
     FIST,
     OPEN,
     SCROLL,
+    TOGETHER,
     VICTORY,
     Driver,
     hand_points,
@@ -418,10 +419,25 @@ def test_scroll_direction_dead_zone_and_scale_invariance() -> None:
     assert abs(scroll_ticks(60, 0.5, palm_px=70) - scroll_ticks(60, 0.5, palm_px=280)) <= 1
 
 
-def test_spread_fingers_are_not_scroll() -> None:
+def test_two_fingers_are_precision_never_scroll() -> None:
+    """Scroll used to be index + middle together, and the precision V kept turning into it.
+    Now two fingers, together or apart, are the pointer at its slowest speed."""
+    for pose in (VICTORY, TOGETHER):
+        d = settled()
+        d.hold(pose, 0.3)
+        assert d.outputs[-1].mode is Mode.POINTER and d.outputs[-1].speed == 0.25
+
+
+def test_scroll_is_the_whole_hand_turned_sideways() -> None:
     d = settled()
-    d.hold(VICTORY, 0.3)
-    assert d.outputs[-1].mode is Mode.POINTER
+    for yaw in (0.0, 30.0, 55.0):  # facing the camera, or turned a little: pointer
+        d.hold({"yaw_deg": yaw}, 0.3)
+        assert d.outputs[-1].mode is Mode.POINTER
+    d.hold({"yaw_deg": 80.0}, 0.3)
+    assert d.outputs[-1].mode is Mode.SCROLL
+    fist = {"yaw_deg": 80.0, "curl": {f: 1.0 for f in ("index", "middle", "ring", "pinky")}}
+    d.hold(fist, 0.3)
+    assert d.outputs[-1].mode is Mode.CLUTCH  # a fist turned sideways is still a fist
 
 
 def test_zoom_follows_the_hand_up_and_down() -> None:

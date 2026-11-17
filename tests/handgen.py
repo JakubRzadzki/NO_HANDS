@@ -40,12 +40,13 @@ FIST: dict[str, Any] = {
     "curl": {"index": 1.0, "middle": 1.0, "ring": 1.0, "pinky": 1.0},
     "thumb": "tucked",
 }
-SCROLL: dict[str, Any] = {  # index + middle up and touching, ring + pinky curled
+SCROLL: dict[str, Any] = {"yaw_deg": 80.0}  # the open hand turned sideways, edge to the camera
+TOGETHER: dict[str, Any] = {  # index + middle up and touching, ring + pinky curled (old scroll)
     "curl": {"ring": 1.0, "pinky": 1.0},
     "spread": {"index": -6.0, "middle": 4.0},
     "thumb": "tucked",
 }
-VICTORY: dict[str, Any] = {  # same fingers as SCROLL but spread apart -> plain pointer
+VICTORY: dict[str, Any] = {  # index + middle up and spread, ring + pinky curled
     "curl": {"ring": 1.0, "pinky": 1.0},
     "spread": {"index": 10.0, "middle": -8.0},
     "thumb": "tucked",
@@ -119,6 +120,7 @@ def project(
     roll_deg: float = 0.0,
     frame: tuple[int, int] = (1280, 720),
     pivot: str = "anchor",
+    yaw_deg: float = 0.0,
 ) -> FloatArray:
     """Model space -> MediaPipe normalized coordinates.
 
@@ -129,6 +131,14 @@ def project(
     """
     width, height = frame
     k = palm_px / PALM_M  # px per metre
+    # Yaw: the hand turned about its own long axis (90 = edge to the camera).
+    a = math.radians(yaw_deg)
+    points = points.copy()
+    x, z = points[:, 0].copy(), points[:, 2].copy()
+    points[:, 0], points[:, 2] = (
+        x * math.cos(a) + z * math.sin(a),
+        -x * math.sin(a) + z * math.cos(a),
+    )
     r = math.radians(roll_deg)
     rotation = np.array([[math.cos(r), -math.sin(r)], [math.sin(r), math.cos(r)]])
     xy = points[:, :2] @ rotation.T
@@ -147,6 +157,7 @@ def make_obs(
     roll_deg: float = 0.0,
     frame: tuple[int, int] = (1280, 720),
     pivot: str = "anchor",
+    yaw_deg: float = 0.0,
     **pose: Any,
 ) -> HandObservation:
     norm = project(
@@ -156,6 +167,7 @@ def make_obs(
         roll_deg=roll_deg,
         frame=frame,
         pivot=pivot,
+        yaw_deg=yaw_deg,
     )
     return HandObservation.from_normalized(norm, frame, t)
 
