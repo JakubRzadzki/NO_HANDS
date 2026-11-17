@@ -7,6 +7,7 @@ import pytest
 from src.os_controller import (
     Click,
     KeyTap,
+    Magnify,
     MoveBy,
     MoveTo,
     OSController,
@@ -54,6 +55,21 @@ class RecordingBackend:
 
     def tap(self, key: str) -> None:
         self._record("tap", key)
+
+    def magnifier(self, on: bool) -> None:
+        self._record("magnifier", on)
+
+
+def test_the_magnifier_is_asked_only_on_a_change_and_never_outlives_us() -> None:
+    """The system shortcuts toggle (macOS, GNOME), so asking twice would turn it off again."""
+    backend = RecordingBackend()
+    ctl = OSController(backend)
+    ctl.apply([Magnify(True), Magnify(True)])
+    assert backend.calls == [("magnifier", True)] and ctl.magnifier_on
+    ctl.release_all()  # exit, crash, pause: the magnifier goes off with us
+    assert backend.calls[-1] == ("magnifier", False) and not ctl.magnifier_on
+    ctl.apply([Magnify(False)])
+    assert backend.calls.count(("magnifier", False)) == 1
 
 
 def test_actions_are_dispatched_in_order() -> None:

@@ -69,7 +69,14 @@ class KeyTap:
     count: int = 1
 
 
-Action = MoveTo | MoveBy | Click | Press | Release | Scroll | Zoom | KeyTap
+@dataclass(frozen=True)
+class Magnify:
+    """Turn the system's screen magnifier on or off (see ``PynputBackend.magnifier``)."""
+
+    on: bool
+
+
+Action = MoveTo | MoveBy | Click | Press | Release | Scroll | Zoom | KeyTap | Magnify
 
 
 # -- backends --------------------------------------------------------------------------------
@@ -83,6 +90,7 @@ class InputBackend(Protocol):
     def key_down(self, key: str) -> None: ...
     def key_up(self, key: str) -> None: ...
     def tap(self, key: str) -> None: ...
+    def magnifier(self, on: bool) -> None: ...
 
 
 class PynputBackend:
@@ -142,6 +150,34 @@ class PynputBackend:
     def tap(self, key: str) -> None:
         self._keyboard.tap(self._taps[key])
 
+    def magnifier(self, on: bool) -> None:
+        """The system's own magnifier, through its keyboard shortcut. It follows the mouse,
+        handles every monitor and DPI setting, and never takes the focus from the app below.
+
+        Windows: Win + Plus starts Magnifier (Win + Esc closes it). macOS: Option + Cmd + 8
+        toggles Zoom (Accessibility -> Zoom -> "Use keyboard shortcuts" must be on). Linux
+        (GNOME): Super + Alt + 8 toggles the zoom. The controller only asks when the state
+        changes, so the toggles stay in step."""
+        from pynput import keyboard
+
+        k = keyboard.Key
+        if sys.platform == "win32":
+            # VK_OEM_PLUS: the "=/+" key. Win stays down while it is tapped, so the Start menu
+            # does not open when Win is let go.
+            combo = [k.cmd], keyboard.KeyCode.from_vk(0xBB) if on else k.esc
+        elif sys.platform == "darwin":
+            combo = [k.alt, k.cmd], keyboard.KeyCode.from_char("8")
+        else:
+            combo = [k.cmd, k.alt], keyboard.KeyCode.from_char("8")
+        modifiers, key = combo
+        for modifier in modifiers:
+            self._keyboard.press(modifier)
+        try:
+            self._keyboard.tap(key)
+        finally:
+            for modifier in reversed(modifiers):
+                self._keyboard.release(modifier)
+
 
 class DryRunBackend:
     """Logs instead of injecting: tune gestures without the cursor running away from you."""
@@ -173,6 +209,9 @@ class DryRunBackend:
     def tap(self, key: str) -> None:
         log.info("[dry-run] tap %s", key)
 
+    def magnifier(self, on: bool) -> None:
+        log.info("[dry-run] magnifier %s", "on" if on else "off")
+
 
 # -- controller ------------------------------------------------------------------------------
 class OSController:
@@ -181,6 +220,7 @@ class OSController:
         self._zoom_modifier = zoom_modifier
         self._held_buttons: set[str] = set()
         self._held_keys: set[str] = set()
+        self._magnifier_on = False
         self.last_error: str | None = None
 
     @classmethod
@@ -194,6 +234,10 @@ class OSController:
     @property
     def held_keys(self) -> frozenset[str]:
         return frozenset(self._held_keys)
+
+    @property
+    def magnifier_on(self) -> bool:
+        return self._magnifier_on
 
     def apply(self, actions: Iterable[Action]) -> None:
         for action in actions:
@@ -218,6 +262,12 @@ class OSController:
             except Exception as exc:
                 log.error("Could not release key %s: %s", key, exc)
         self._held_keys.clear()
+        if self._magnifier_on:  # the magnifier we turned on must not outlive us
+            try:
+                self._backend.magnifier(False)
+            except Exception as exc:
+                log.error("Could not turn the magnifier off: %s", exc)
+            self._magnifier_on = False
 
     def _dispatch(self, action: Action) -> None:
         b = self._backend
@@ -245,6 +295,10 @@ class OSController:
             case KeyTap(key, count):
                 for _ in range(count):
                     b.tap(key)
+            case Magnify(on):
+                if on != self._magnifier_on:  # the shortcuts toggle: only ask on a change
+                    b.magnifier(on)
+                    self._magnifier_on = on
 
     def _zoom(self, steps: int) -> None:
         key = self._zoom_modifier
