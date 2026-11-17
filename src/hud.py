@@ -350,7 +350,8 @@ class GazeMap:
         k = max(w / 1280.0, 1.0)  # frames wider than 1280 px are shrunk for display
         map_w = round(240 * k)
         map_h = round(map_w * self.screen[1] / self.screen[0])
-        x0, y0 = w - map_w - round(10 * k), h - map_h - round(10 * k)
+        # Above the author's mark, which runs along the bottom edge.
+        x0, y0 = w - map_w - round(10 * k), h - map_h - round(36 * k)
         region = frame[y0 : y0 + map_h, x0 : x0 + map_w]
         region[:] = cv2.convertScaleAbs(region, alpha=0.3, beta=0)
         cv2.rectangle(frame, (x0, y0), (x0 + map_w, y0 + map_h), GRAY, 1, cv2.LINE_AA)

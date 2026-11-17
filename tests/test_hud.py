@@ -63,3 +63,16 @@ def test_polish_letters_get_their_marks() -> None:
     put_text_pl(marked, "RZĄDZKI", (10, 50), 1.0, (255, 255, 255), 2)
     extra = (marked > 0).sum() - (plain > 0).sum()
     assert extra > 0 and (marked[50:] > 0).sum() > (plain[50:] > 0).sum()  # below the line
+
+
+def test_the_gaze_map_stays_above_the_watermark() -> None:
+    """Both live in the bottom-right corner: the map must not hide the author's mark."""
+    out = FaceOutput(FaceMode.EYES, "EYES", pointer=(960.0, 540.0), gaze_raw=(970.0, 545.0))
+    for size in ((720, 1280), (1080, 1920)):
+        with_map = np.zeros((*size, 3), np.uint8)
+        GazeMap((1920, 1080)).draw(with_map, out)
+        with_mark = np.zeros((*size, 3), np.uint8)
+        draw_watermark(with_mark)
+        map_bottom = np.nonzero(with_map.any(axis=(1, 2)))[0].max()
+        mark_top = np.nonzero(with_mark.any(axis=(1, 2)))[0].min()
+        assert map_bottom < mark_top
