@@ -1,5 +1,8 @@
 # NO_HANDS
 
+*Made by Jakub Rządzki · WIEIK IWIK R2S3* (the same mark is in the corner of every preview
+window).
+
 Control your computer through a webcam without touching it. You get a mouse driven by hand
 gestures, a presenter's remote in your hand, a cursor that follows your eyes, and arrow keys
 from head movements. Everything runs locally on the CPU, no GPU needed. MediaPipe tracks the
@@ -85,6 +88,7 @@ released.
 <tr><td align="center"><img src="docs/gestures/hand_move.png" width="210" alt="Move the cursor: open hand"></td><td align="center"><img src="docs/gestures/hand_left_button.png" width="210" alt="Left button: thumb and index touching"></td><td align="center"><img src="docs/gestures/hand_drag.png" width="210" alt="Drag: keep touching and move"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: index and middle together, move up or down"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_zoom.png" width="210" alt="Zoom: horns, move up or down"></td><td align="center"><img src="docs/gestures/hand_clutch.png" width="210" alt="Pause: fist"></td><td align="center"><img src="docs/gestures/hand_flick.png" width="210" alt="Flick sideways and back: previous or next slide"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_slower.png" width="210" alt="Slower cursor: fold the pinky"></td><td align="center"><img src="docs/gestures/hand_precision.png" width="210" alt="Precision and magnifier: V sign"></td><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Zoom with two hands: pinch both and pull apart"></td></tr>
 </table>
 
 | Action | Gesture | Notes |
@@ -98,13 +102,30 @@ released.
 | Previous / next slide | **flick** the open hand left / right **and straight back** | Left / Right arrow; the cursor ends where it was |
 | Scroll | **index + middle** extended and together, ring + pinky curled; move the hand up/down/sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone |
 | Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
+| Zoom with two hands | **pinch both hands**, then pull them **apart** (zoom in) or **together** (zoom out) | like two fingers on a touchpad; one step per 12% change of the distance; while the other hand pinches, the cursor holds still and nothing clicks |
+| Slower cursor | **fold the pinky** (index, middle, ring out) | half speed: for small targets |
+| Precision + magnifier | **V**: index + middle out, ring + pinky folded | quarter speed, and the system magnifier comes on; open the hand again and it goes off |
 | Clutch | **fist** | `absolute`: pauses output; `--relative`: "lifts the mouse" |
 
 - **The left button is held like a real one.** It goes down the moment thumb and index meet and
   up when they part. A held button survives a few bad frames and up to 0.5 s of lost tracking.
-- **Pinch with an open hand** (like an "OK" sign): at least one other finger straight. Once
-  the button is down, the other fingers may relax. With every finger folded, a pinch looks
-  exactly like a fist, and a fist never clicks.
+- **Pinch with an open hand** (like an "OK" sign): at least one other finger not folded; relaxed
+  is enough. With every finger folded, a pinch looks exactly like a fist, and a fist never
+  clicks. When the thumb is about as close to the middle finger as to the index, it is a left
+  click; a right click needs the middle finger clearly closest.
+- **Precision and clicking go together.** The speed counts only the middle, ring and pinky
+  fingers, so a pinch never changes it: make a V, aim at quarter speed with the screen
+  magnified, pinch thumb + index, done. Back at full speed the cursor does not jump: it catches
+  up with the hand while the hand moves.
+- **The magnifier is the system's own:** Windows Magnifier (`Win` + `+`, closed with
+  `Win` + `Esc`), macOS Zoom (`Option` + `Cmd` + `8`, turn on "Use keyboard shortcuts to zoom" in
+  Accessibility → Zoom first), GNOME (`Super` + `Alt` + `8`). It follows the cursor and goes off
+  when the program ends. `GestureConfig.magnifier = False` keeps it off.
+- **Two hands:** the second hand counts only while it pinches. Resting in view, on the desk or
+  on the forehead, it changes nothing: the cursor moves and clicks as usual (a pinch of the
+  cursor hand then waits 4 frames, so that pinching both hands at once never clicks first). A
+  held button is never let go because of a second hand. Tracking two hands takes the tracker
+  about twice as long (12 → 23 ms per frame here); `--no-two-hands` turns it off.
 - **The flick has to come straight back.** That is what tells it from moving the cursor:
   nobody points far, fast, and straight back. It also needs to be longer and faster than a
   `--slides` swipe (about 14 cm, in a snap). `GestureConfig.flick_slides = False` turns it off.
@@ -112,7 +133,8 @@ released.
   view mid-pinch does not click.
 - **The preview's box** is the active area: the hand inside it covers the whole screen. Its colour
   shows the mode: cyan = moving, green = button down / slide changed, yellow = scroll,
-  magenta = zoom, red = clutch, orange = media mode. The panel lists the gestures.
+  magenta = zoom (also with two hands), red = clutch, orange = media mode. The panel lists the
+  gestures and shows the cursor speed when it is slowed down.
 
 ### Media mode
 
@@ -144,6 +166,7 @@ photo viewers. There is no cursor in this mode, so the hand can simply move.
 
 <table>
 <tr><td align="center"><img src="docs/gestures/hand_swipe.png" width="210" alt="Move the open hand left or right: previous or next slide"></td><td align="center"><img src="docs/gestures/slides_pinch.png" width="210" alt="Quick pinch: next slide"></td><td align="center"><img src="docs/gestures/slides_zoom.png" width="210" alt="Pinch and move up or down: zoom"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Pinch both hands and pull apart: zoom"></td></tr>
 </table>
 
 | Action | Gesture |
@@ -151,6 +174,7 @@ photo viewers. There is no cursor in this mode, so the hand can simply move.
 | Previous / next slide | move the open hand left / right (Left / Right arrow) |
 | Next slide | a quick **pinch** thumb + index, like a click |
 | Zoom in / out | **pinch** thumb + index and move the hand up / down (Ctrl + mouse wheel, one step per ~3 cm) |
+| Zoom in / out | **pinch both hands** and pull them apart / together (letting go is not "next slide") |
 
 **Swipes the way people make them.** The slide changes as soon as the fast part of the movement
 ends: when the hand slows down or turns back. You do not have to hold the hand still before or
@@ -302,6 +326,7 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 | `--probe-camera` | measure which modes the camera really delivers, suggest the best, exit |
 | `--camera-test` | show only the camera picture in the preview window (no tracking, no input): the first thing to try when the preview shows nothing |
 | `--camera-settings` | Windows: open the camera driver's settings (exposure, low-light compensation) |
+| `--no-two-hands` | track one hand only: no two-hand zoom, the tracker is about twice as fast |
 | `--no-hud` | no preview window (less CPU) |
 | `--screen WxH` | manual screen size when auto-detection fails |
 | `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | as the names say |
@@ -320,7 +345,11 @@ parameters are in `config.py`.
 | **Hand mouse:** cursor jitters while the hand is still | `FilterConfig.min_cutoff` ↓ (e.g. 0.6) |
 | **Hand mouse:** cursor lags behind fast movement | `FilterConfig.beta` ↑ |
 | **Hand mouse:** you have to stretch your arm | `--sensitivity 1.3` or `PointerConfig.roi_width` ↓ |
-| **Hand mouse:** pinches do not register | keep another finger straight (OK sign); check "pinch I" in the HUD while touching, then `GestureConfig.pinch_enter` ↑ (e.g. 0.32) |
+| **Hand mouse:** pinches do not register | keep another finger out (OK sign); check "pinch I" in the HUD while touching, then `GestureConfig.pinch_enter` ↑ (e.g. 0.32) |
+| **Hand mouse:** the horns do not zoom | fold middle + ring further, or zoom with two hands; `horns_relaxed` (on) accepts half-folded fingers |
+| **Hand mouse:** the cursor slows down on its own | a finger is half folded: open the hand fully; `precision_speeds = (1.0, 1.0, 1.0)` turns precision off |
+| **Hand mouse:** the magnifier does not come on | macOS: enable the Zoom keyboard shortcuts; Linux: GNOME only; or `magnifier = False` |
+| **Any mode:** low FPS with the hand mouse | `--no-two-hands` (the second-hand search costs about as much as the tracking itself) |
 | **Hand mouse:** the button lets go while dragging | `pinch_exit` ↑ (e.g. 0.42), `pinch_release_frames` ↑, `drag_lost_grace` ↑ |
 | **Hand mouse:** the button does not let go | open the fingers further, or `pinch_exit` ↓ (above `pinch_enter`) |
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
@@ -368,13 +397,17 @@ parameters are in `config.py`.
     magnified (`TrackerConfig.zoom_crop`). On real hand photos at several sizes that found a
     hand in 48% more frames.
   - A far hand near the frame edge can still be missed.
-- **One hand, one face:** keep one hand in the frame (`num_hands=1`). `--eyes` and `--head`
-  track one face, which must be reasonably large in the frame: sit within about 1 m.
+- **Hands:** one hand drives the cursor; a second one is only for the two-hand zoom, and
+  only while it pinches. When the hands cross, the tracker may swap them. `--eyes` and `--head` track one face, which must
+  be reasonably large in the frame: sit within about 1 m.
+- **Magnifier:** it is the system's, through its keyboard shortcut. If that shortcut is changed
+  or switched off (macOS by default), nothing happens. Windows' first `Win` + `+` opens
+  Magnifier's small window; it does not take the focus.
 - **Eyes:** 1–3 cm of accuracy is what a laptop webcam allows; see [Eyes](#eyes---eyes).
 - **Slides:** a wide, quick sideways gesture while talking changes the slide: no detector can
   tell it from a swipe of the same size and speed. Keep a fist while gesturing, or pause.
-- **Pinch:** it needs an open hand (another finger straight). With every finger folded, a pinch
-  and a fist give the same landmarks.
+- **Pinch:** it needs an open hand (another finger out, relaxed is enough). With every finger
+  folded, a pinch and a fist give the same landmarks.
 - **Eyes:** shifts smaller than the jump radius (~3× the jitter) need the head; see above.
 
 ## How it works
@@ -410,6 +443,8 @@ tested without a camera and a display:
 | `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping |
 | `src/gesture_engine.py` | hand features, debounced posture classification, the pinch button (press / hold / release), right click, scroll, zoom, flick |
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
+| `src/pinch.py` | the hysteresis latch and the thumb-to-fingertip distance shared by every pinch |
+| `src/two_hands.py` | the zoom with two pinching hands |
 | `src/swipes.py` | swipe detection for `--slides` and the hand mouse's flick: strokes cut out of the hand's motion by speed |
 | `src/slide_gestures.py` | `--slides`: swipes, pinch = next slide, pinch + vertical travel = zoom |
 | `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), 3D head pose, gaze features |
@@ -455,7 +490,11 @@ tested without a camera and a display:
   clean click on one pixel.
 - **What a pinch looks like, from 480 real photos.** The pinching finger reaches for the
   thumb: bent, not folded (extension ratio 0.98–1.04, against < 0.9 for a folded finger), and
-  another finger is straight.
+  another finger is not folded (> 1.05; the fingers of real fists are ≤ 0.99).
+  - The first rule wanted another finger *straight* (> 1.12). People relax the other fingers
+    when they click, and those clicks were missed.
+  - Lowering the 0.93 for the pinching finger was tried and rejected: at 0.90 real fists
+    clicked.
   - Without these two conditions, a thumb resting on a folded finger counted as a pinch on 30%
     of the fists and 36% of the V signs (as a thumb + ring double click).
   - With them: every real pinch, and none of the fists, V signs or open hands.
