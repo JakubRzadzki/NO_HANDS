@@ -75,6 +75,11 @@ class CursorMapper:
     relative: like a real mouse, only *changes* of the filtered position move the cursor.
               While frozen (clutch, scroll, pinch) deltas are discarded, so the hand can be
               repositioned in the air like lifting a mouse off its pad.
+
+    ``speed`` below 1 slows the cursor down (precision). In absolute mode the cursor then moves
+    only part of the way the hand moves, which leaves it off the spot the hand points at. Back
+    at full speed that gap closes by ``catch_up`` times the hand's travel (0.5: the cursor
+    moves up to 1.5x / 0.5x as fast as the hand until it is back), so it never jumps.
     """
 
     def __init__(
@@ -85,6 +90,7 @@ class CursorMapper:
         mode: str = "absolute",
         edge_overshoot: float = 0.03,
         relative_gain: float = 1.0,
+        catch_up: float = 0.5,
     ) -> None:
         if mode not in ("absolute", "relative"):
             raise ValueError(f"unknown pointer mode {mode!r}")
@@ -98,11 +104,13 @@ class CursorMapper:
         self._last_pos: tuple[int, int] | None = None  # absolute: last position sent
         self._residual = np.zeros(2)  # relative: sub-pixel motion carried to the next frame
         self._was_frozen = False
+        self.catch_up = catch_up
+        self._offset = np.zeros(2)  # absolute: cursor - hand target, built up by slow movement
 
     @property
     def target(self) -> FloatArray | None:
-        """Latest filtered cursor target in screen pixels (None before the first update)."""
-        return None if self._target is None else self._target.copy()
+        """Latest cursor target in screen pixels (None before the first update)."""
+        return None if self._target is None else self._target + self._offset
 
     def reset(self) -> None:
         """Call when tracking is lost: the next hand position starts a fresh trajectory."""
@@ -111,19 +119,24 @@ class CursorMapper:
         self._last_pos = None
         self._residual[:] = 0.0
         self._was_frozen = False
+        self._offset[:] = 0.0
 
     def update(
-        self, anchor: tuple[float, float], t: float, frozen: bool = False
+        self, anchor: tuple[float, float], t: float, frozen: bool = False, speed: float = 1.0
     ) -> MoveTo | MoveBy | None:
         """Feed the anchor (normalized frame coords). Always updates the filter so it stays
-        converged, but emits nothing while ``frozen``."""
+        converged, but emits nothing while ``frozen``. ``speed`` < 1 = precision."""
         raw = self._raw_target(anchor)
         if self.mode == "absolute":
+            previous = self._target
             self._target = self._filter(raw, t)
+            if previous is not None:
+                self._absorb(self._target - previous, speed)
             if frozen:
                 return None
-            x = round(min(max(float(self._target[0]), 0.0), self.screen_w - 1.0))
-            y = round(min(max(float(self._target[1]), 0.0), self.screen_h - 1.0))
+            cursor = self._target + self._offset
+            x = round(min(max(float(cursor[0]), 0.0), self.screen_w - 1.0))
+            y = round(min(max(float(cursor[1]), 0.0), self.screen_h - 1.0))
             if (x, y) == self._last_pos:
                 return None  # also stops us fighting a physical mouse while the hand is still
             self._last_pos = (x, y)
@@ -141,11 +154,25 @@ class CursorMapper:
             self._residual[:] = 0.0
             return None
         # Keep the fractional part: slow movements of 0.3 px/frame must still add up.
-        self._residual += (self._target - previous) * self.relative_gain
+        self._residual += (self._target - previous) * self.relative_gain * speed
         step = np.trunc(self._residual)
         self._residual -= step
         dx, dy = int(step[0]), int(step[1])
         return MoveBy(dx, dy) if (dx or dy) else None
+
+    def _absorb(self, delta: FloatArray, speed: float) -> None:
+        """Absolute mode: the cursor moves ``speed`` times as far as the hand target."""
+        if speed < 1.0:
+            self._offset -= (1.0 - speed) * delta
+            # The cursor never leaves the screen, so neither does the offset it may build up.
+            limit = np.array([self.screen_w, self.screen_h], dtype=np.float64)
+            self._offset = np.clip(self._offset, -limit, limit)
+        elif self._offset.any():
+            # The gap closes by catch_up x the hand's travel: the cursor moves a little faster
+            # or slower than the hand until it is back where the hand points. Never a jump.
+            gap = float(np.linalg.norm(self._offset))
+            closed = self.catch_up * float(np.linalg.norm(delta))
+            self._offset *= max(0.0, gap - closed) / gap
 
     def _raw_target(self, anchor: tuple[float, float]) -> FloatArray:
         if self.mode == "absolute":
