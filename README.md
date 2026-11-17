@@ -30,6 +30,9 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **Scroll with the whole hand:** turn the hand sideways, edge to the camera, and move it up or
+  down. Scroll used to be index + middle together, and the precision V kept turning into it;
+  two fingers are now always precision.
 - **A click stays a click:** the drag starts only when the hand clearly moves (~3 cm), never
   because the pinch lasted long, and it starts from where the button went down. Before, every
   pinch longer than 0.25 s or a 40-pixel drift (closing the fingers moves the knuckles that
@@ -65,11 +68,11 @@ problem found while measuring.
 | Hand mouse | thumb + index touching | left button (click, or drag while held) |
 | Hand mouse | two quick pinches | double click |
 | Hand mouse | thumb + middle | right click |
-| Hand mouse | index + middle together, move up / down | scroll |
+| Hand mouse | whole hand turned sideways (edge to the camera), move up / down | scroll |
 | Hand mouse | horns (index + pinky), move up / down | zoom in / out |
 | Hand mouse, `--slides` | both hands pinched, pull apart / together | zoom in / out |
 | Hand mouse | pinky folded | cursor at 50% |
-| Hand mouse | V (index + middle out) | cursor at 25% + magnifier |
+| Hand mouse | V or index + middle together (ring + pinky folded) | cursor at 25% + magnifier |
 | Hand mouse | open hand flicked sideways and back | previous / next slide |
 | Hand mouse | fist | pause (clutch) |
 | Hand mouse | shaka held 0.6 s | mouse ↔ media mode |
@@ -151,7 +154,7 @@ released.
 
 <table>
 <tr><td align="center"><img src="docs/gestures/hand_move.png" width="210" alt="Move the cursor: open hand"></td><td align="center"><img src="docs/gestures/hand_left_button.png" width="210" alt="Left button: thumb and index touching"></td><td align="center"><img src="docs/gestures/hand_drag.png" width="210" alt="Drag: keep touching and move"></td></tr>
-<tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: index and middle together, move up or down"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: the whole hand turned sideways, move up or down"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_zoom.png" width="210" alt="Zoom: horns, move up or down"></td><td align="center"><img src="docs/gestures/hand_clutch.png" width="210" alt="Pause: fist"></td><td align="center"><img src="docs/gestures/hand_flick.png" width="210" alt="Flick sideways and back: previous or next slide"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_slower.png" width="210" alt="Slower cursor: fold the pinky"></td><td align="center"><img src="docs/gestures/hand_precision.png" width="210" alt="Precision and magnifier: V sign"></td><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Zoom with two hands: pinch both and pull apart"></td></tr>
 </table>
@@ -165,11 +168,11 @@ released.
 | Double click | two quick pinches | the cursor waits 0.35 s after a click, so both land on the same pixel |
 | Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
 | Previous / next slide | **flick** the open hand left / right **and straight back** | Left / Right arrow; the cursor ends where it was |
-| Scroll | **index + middle** extended and together, ring + pinky curled; move the hand up/down/sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone |
+| Scroll | **the whole hand turned sideways**, its edge to the camera (like a karate chop); move it up / down / sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone. A fist turned sideways is still a fist |
 | Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
 | Zoom with two hands | **pinch both hands**, then pull them **apart** (zoom in) or **together** (zoom out) | like two fingers on a touchpad; one step per 12% change of the distance; while the other hand pinches, the cursor holds still and nothing clicks |
 | Slower cursor | **fold the pinky** (index, middle, ring out) | half speed: for small targets |
-| Precision + magnifier | **V**: index + middle out, ring + pinky folded | quarter speed, and the system magnifier comes on; open the hand again and it goes off |
+| Precision + magnifier | **V**: index + middle out (apart or together), ring + pinky folded | quarter speed, and the system magnifier comes on; open the hand again and it goes off |
 | Clutch | **fist** | `absolute`: pauses output; `--relative`: "lifts the mouse" |
 
 - **The left button is held like a real one.** It goes down the moment thumb and index meet and
@@ -459,6 +462,8 @@ parameters are in `config.py`.
 | **Hand mouse:** slides change while pointing or talking | `flick_distance` ↑, `flick_speed` ↑, or `flick_slides = False` |
 | **Hand mouse:** cursor stops when the thumb rests near a finger | `approach_freeze` ↓ (0 disables freezing) |
 | **Hand mouse:** scroll too fast / too slow | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
+| **Hand mouse:** scroll does not start | turn the hand further, until the knuckles line up (the HUD shows `palm width`; below 0.25 scrolls); or `scroll_palm_enter` ↑ (e.g. 0.3) |
+| **Hand mouse:** scroll starts while pointing | keep the palm or the back of the hand towards the camera; `scroll_palm_enter` ↓ (e.g. 0.2) |
 | **Hands:** the hand is not found from far away | come closer, or more light; `TrackerConfig.zoom_crop` (smaller = more magnified, narrower) |
 | **Slides:** swipes are not recognised | does the HUD say "open hand"? Then `SlidesConfig.swipe_speed` ↓ (e.g. 3), `swipe_distance` ↓ (e.g. 0.8) |
 | **Slides:** slides change while you talk | `swipe_speed` ↑ (e.g. 6), `swipe_distance` ↑ (e.g. 1.5), `min_fingers = 4` |
@@ -619,6 +624,12 @@ tested without a camera and a display:
   cursor (it would receive the clicks). The system magnifier follows the mouse, handles
   multiple monitors and DPI, and is reached through its keyboard shortcut. The program
   remembers whether it turned it on, and turns it off on exit.
+- **Scroll is the hand turned sideways, measured by the palm's width.** The distance between the
+  index and pinky knuckles in the image, over the palm length, is 0.62–1.12 on real hands
+  facing the camera (0.38 for one pinching hand) and about 0.1–0.25 edge on; it does not
+  depend on how far the hand is or how it is tilted in the image. Scroll starts below 0.25
+  and ends above 0.35. The first scroll pose, index + middle together, differed from the
+  precision V only by the gap between two fingertips, so the two kept swapping.
 - **The second hand only when it pinches.** The first version switched to two-hand mode as soon
   as two hands were in view. On the slides test video a woman holds one hand on her forehead,
   and no swipe worked any more. Now the second hand counts only while it pinches; while one is

@@ -229,6 +229,34 @@ def arc(
     cv2.arrowedLine(c.img, pts[-4], pts[-1], MOVE, 7 * SS, cv2.LINE_AA, tipLength=1.2)
 
 
+def capsule(
+    c: Canvas,
+    pts: list[Point],
+    width: float,
+    fill: tuple[int, int, int],
+    line: tuple[int, int, int],
+) -> None:
+    """A rounded limb through ``pts``: outline first, then the fill."""
+    for colour, extra in ((line, 6 * SS), (fill, 0)):
+        px = [c.px(p) for p in pts]
+        t = c.r(width) + extra
+        for p0, p1 in itertools.pairwise(px):
+            cv2.line(c.img, p0, p1, colour, t, cv2.LINE_AA)
+        for p in px:
+            cv2.circle(c.img, p, t // 2, colour, -1, cv2.LINE_AA)
+
+
+def sideways(c: Canvas) -> None:
+    """The open hand seen from the side (its edge to the camera): palm and fingers stacked."""
+    palm = np.array([c.px(p) for p in ((-0.16, 0.0), (0.14, 0.0), (0.2, 0.9), (-0.18, 0.92))])
+    cv2.fillPoly(c.img, [palm.astype(np.int32)], SKIN_LINE, cv2.LINE_AA)
+    cv2.polylines(c.img, [palm.astype(np.int32)], True, SKIN_LINE, c.r(0.12), cv2.LINE_AA)
+    cv2.fillPoly(c.img, [palm.astype(np.int32)], SKIN, cv2.LINE_AA)
+    cv2.polylines(c.img, [palm.astype(np.int32)], True, SKIN, c.r(0.09), cv2.LINE_AA)
+    capsule(c, [(0.0, 0.88), (0.03, 1.45), (0.05, 1.9)], 0.3, SKIN, ACTIVE)  # the stacked fingers
+    capsule(c, [(0.16, 0.3), (0.36, 0.72), (0.3, 1.02)], 0.2, SKIN, SKIN_LINE)  # the thumb
+
+
 def lens(c: Canvas, centre: Point) -> None:
     """A magnifying glass."""
     x, y = c.px(centre)
@@ -343,15 +371,13 @@ def build() -> dict[str, Any]:
 
     def scroll() -> Canvas:
         c = Canvas()
-        h = Hand().up("index", -1).up("middle", 1).curl("ring").curl("pinky").thumb_tuck()
-        h.active |= {"index", "middle"}
-        h.draw(c)
-        arrow(c, (1.05, 1.5), (1.05, 2.05))
-        arrow(c, (1.05, 1.3), (1.05, 0.75))
+        sideways(c)
+        arrow(c, (0.75, 1.5), (0.75, 2.05))
+        arrow(c, (0.75, 1.3), (0.75, 0.75))
         caption(
             c,
             "Scroll",
-            "index + middle together, ring + pinky folded",
+            "whole hand turned sideways, edge to the camera",
             "move up / down: further = faster",
         )
         return c
