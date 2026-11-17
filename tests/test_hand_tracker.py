@@ -14,6 +14,7 @@ from src.hand_tracker import (
     HandTracker,
     centre_crop,
     ensure_model,
+    pick_primary,
     uncrop,
 )
 
@@ -143,6 +144,7 @@ def fake_tracker(main_finds: bool, zoom_finds: bool) -> HandTracker:
     tracker.zoom_crop = 0.6
     tracker._last_ts_ms, tracker._misses = -1, 0
     tracker.last_inference_ms, tracker.zoomed = 0.0, False
+    tracker.second, tracker._last_wrist = None, None
     return tracker
 
 
@@ -166,3 +168,15 @@ def test_an_empty_scene_is_searched_less_often() -> None:
         assert empty.process(frame, i / 30) is None
     searches = len(empty._zoomed.sizes)
     assert searches == ZOOM_IDLE_AFTER + 10  # every frame at first, then every 3rd
+
+
+def test_the_cursor_hand_stays_the_same_when_mediapipe_swaps_the_order() -> None:
+    """MediaPipe lists two hands in any order. The cursor must keep following the same one."""
+    from tests.handgen import OPEN, make_obs
+
+    left = make_obs(0.0, center=(0.25, 0.55), **OPEN)
+    right = make_obs(0.0, center=(0.70, 0.55), palm_px=120.0, **OPEN)
+    assert pick_primary([left, right], right.px[0, :2])[0] is right
+    assert pick_primary([right, left], right.px[0, :2]) == (right, left)
+    assert pick_primary([right, left], None)[0] is left  # a new hand: the biggest one
+    assert pick_primary([left], None) == (left, None)

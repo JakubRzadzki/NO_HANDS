@@ -130,6 +130,18 @@ def uncrop(
     return out
 
 
+def pick_primary(
+    hands: list[HandObservation], last_wrist: FloatArray | None
+) -> tuple[HandObservation, HandObservation | None]:
+    """(the hand that drives the cursor, the other one or None). The driving hand is the one
+    nearest to where it was; a new one is the biggest (closest to the camera)."""
+    if last_wrist is None:
+        ranked = sorted(hands, key=lambda h: -h.palm_scale)
+    else:
+        ranked = sorted(hands, key=lambda h: float(np.linalg.norm(h.px[WRIST, :2] - last_wrist)))
+    return ranked[0], (ranked[1] if len(ranked) > 1 else None)
+
+
 def ensure_model(path: str | os.PathLike[str], url: str) -> Path:
     """Return the model path, downloading the model first if it is missing."""
     target = Path(path)
@@ -156,7 +168,11 @@ def ensure_model(path: str | os.PathLike[str], url: str) -> Path:
 
 
 class HandTracker:
-    """BGR frame in, ``HandObservation`` (or None) out."""
+    """BGR frame in, ``HandObservation`` (or None) out.
+
+    With ``num_hands`` = 2 the other hand is in ``second`` (two-hand zoom). The hand returned
+    is the one closest to where the returned hand was before: MediaPipe's order of the hands
+    changes from frame to frame, and the cursor must not jump to the other hand."""
 
     def __init__(self, cfg: TrackerConfig) -> None:
         # Imported lazily: mediapipe is heavy and the pure-logic modules/tests do not need it.
@@ -185,6 +201,8 @@ class HandTracker:
         self._misses = 0  # frames in a row without a hand
         self.last_inference_ms = 0.0
         self.zoomed = False  # the last hand was found by the centre-crop search
+        self.second: HandObservation | None = None  # the other hand, when two are in view
+        self._last_wrist: FloatArray | None = None  # px, the returned hand's wrist
 
     def process(self, frame_bgr: npt.NDArray[np.uint8], timestamp: float) -> HandObservation | None:
         height, width = frame_bgr.shape[:2]
@@ -207,19 +225,29 @@ class HandTracker:
         self.last_inference_ms = (time.perf_counter() - started) * 1000.0
 
         self.zoomed = False
+        self.second = None
         if not result.hand_landmarks:
             self._misses += 1
+            if self._misses > 5:
+                self._last_wrist = None
             return None
         self._misses = 0
-        norm = np.array([(p.x, p.y, p.z) for p in result.hand_landmarks[0]], dtype=np.float64)
-        if box is not None:
-            norm = uncrop(norm, box, (width, height))
-            self.zoomed = True
-        label, score = "Unknown", 1.0
-        if result.handedness and result.handedness[0]:
-            category = result.handedness[0][0]
-            label, score = category.category_name or "Unknown", float(category.score)
-        return HandObservation.from_normalized(norm, (width, height), timestamp, label, score)
+        hands = []
+        for i, landmarks in enumerate(result.hand_landmarks):
+            norm = np.array([(p.x, p.y, p.z) for p in landmarks], dtype=np.float64)
+            if box is not None:
+                norm = uncrop(norm, box, (width, height))
+                self.zoomed = True
+            label, score = "Unknown", 1.0
+            if result.handedness and len(result.handedness) > i and result.handedness[i]:
+                category = result.handedness[i][0]
+                label, score = category.category_name or "Unknown", float(category.score)
+            hands.append(
+                HandObservation.from_normalized(norm, (width, height), timestamp, label, score)
+            )
+        primary, self.second = pick_primary(hands, self._last_wrist)
+        self._last_wrist = primary.px[WRIST, :2].copy()
+        return primary
 
     def close(self) -> None:
         self._landmarker.close()
