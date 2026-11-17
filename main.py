@@ -34,7 +34,7 @@ from src.gaze import GazeModel
 from src.gesture_engine import EngineOutput, GestureEngine, Mode
 from src.hand_tracker import HandTracker
 from src.head_engine import HeadArrows
-from src.hud import FaceHud, Hud, LoopStats
+from src.hud import FaceHud, Hud, LoopStats, draw_watermark
 from src.os_controller import OSController, detect_screen_size, enable_dpi_awareness
 from src.pointer import CursorMapper, Roi
 from src.slide_gestures import SlideGestures
@@ -256,6 +256,7 @@ def _show(name: str, frame: Any) -> None:
     if width > HUD_DISPLAY_WIDTH:
         size = (HUD_DISPLAY_WIDTH, round(height * HUD_DISPLAY_WIDTH / width))
         frame = cv2.resize(frame, size, interpolation=cv2.INTER_LINEAR)
+    draw_watermark(frame)
     cv2.imshow(name, frame)
 
 

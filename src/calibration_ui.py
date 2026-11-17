@@ -14,6 +14,7 @@ from config import EyeConfig
 from src.camera import FramePacket
 from src.face_tracker import FaceObservation, gaze_features, measure_eyes
 from src.gaze import MIN_HEAD_RANGE, CalibrationSession, GazeModel
+from src.hud import draw_watermark
 
 log = logging.getLogger(__name__)
 WINDOW = "Gaze calibration"
@@ -64,6 +65,7 @@ def run_calibration(
                     sample = (gaze_features(obs, left, right, mirrored), obs.head_position[2])
             session.update(packet.timestamp, sample)
             _draw(canvas, session, face_found=obs is not None)
+            draw_watermark(canvas)
             cv2.imshow(WINDOW, canvas)
             if cv2.waitKey(1) & 0xFF in (27, ord("q")):
                 log.info("Gaze calibration cancelled.")
@@ -123,6 +125,7 @@ def _show_result(canvas: npt.NDArray[np.uint8], model: GazeModel) -> None:
     for text, scale, color in lines:
         cv2.putText(canvas, text, (60, y), FONT, scale, color, 2, cv2.LINE_AA)
         y += round(70 * scale)
+    draw_watermark(canvas)
     cv2.imshow(WINDOW, canvas)
     end = time.monotonic() + RESULT_SECONDS
     while time.monotonic() < end:

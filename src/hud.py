@@ -433,3 +433,87 @@ class FaceHud:
             lines.append(("left wink = scroll mode (look up/down), c = recalibrate", 0.4, GRAY))
         lines.append(("eyes closed 1.5 s = pause/resume   q/ESC quit", 0.4, GRAY))
         draw_text_panel(frame, lines)
+
+
+# -- watermark ---------------------------------------------------------------------------------
+WATERMARK = "MADE BY JAKUB RZĄDZKI WIEIK IWIK R2S3"
+# OpenCV's fonts have no Polish letters: they are drawn as the base letter plus their mark.
+_DIACRITICS = {
+    "Ą": ("A", "ogonek"),
+    "Ę": ("E", "ogonek"),
+    "Ć": ("C", "acute"),
+    "Ń": ("N", "acute"),
+    "Ó": ("O", "acute"),
+    "Ś": ("S", "acute"),
+    "Ź": ("Z", "acute"),
+    "Ż": ("Z", "dot"),
+    "Ł": ("L", "stroke"),
+}
+
+
+def put_text_pl(
+    frame: npt.NDArray[np.uint8],
+    text: str,
+    org: tuple[int, int],
+    scale: float,
+    color: Color,
+    thickness: int,
+    font: int = FONT,
+) -> None:
+    """cv2.putText that also draws the Polish capital letters (OpenCV shows them as "?")."""
+    plain = "".join(_DIACRITICS.get(ch, (ch, ""))[0] for ch in text)
+    cv2.putText(frame, plain, org, font, scale, color, thickness, cv2.LINE_AA)
+    x0, y0 = org
+    for i, ch in enumerate(text):
+        if ch not in _DIACRITICS:
+            continue
+        base, mark = _DIACRITICS[ch]
+        left = x0 + cv2.getTextSize(plain[:i], font, scale, thickness)[0][0] if i else x0
+        (cw, chh), _ = cv2.getTextSize(base, font, scale, thickness)
+        if mark == "ogonek":  # a small tail from the right foot, down and curling right
+            radius = max(2, round(chh * 0.24))
+            foot = left + round(cw * 0.86)
+            centre = (foot + radius, y0)
+            cv2.ellipse(frame, centre, (radius, radius), 0, 90, 180, color, thickness, cv2.LINE_AA)
+        elif mark == "acute":
+            top = y0 - chh - max(3, int(chh * 0.25))
+            cv2.line(
+                frame,
+                (left + int(cw * 0.45), top + int(chh * 0.2)),
+                (left + int(cw * 0.7), top - int(chh * 0.05)),
+                color,
+                thickness,
+                cv2.LINE_AA,
+            )
+        elif mark == "dot":
+            centre = (left + cw // 2, y0 - chh - max(3, int(chh * 0.25)))
+            cv2.circle(frame, centre, max(1, thickness), color, -1, cv2.LINE_AA)
+        else:  # stroke through the L
+            mid = y0 - chh // 2
+            cv2.line(
+                frame,
+                (left, mid + int(chh * 0.15)),
+                (left + int(cw * 0.55), mid - int(chh * 0.15)),
+                color,
+                thickness,
+                cv2.LINE_AA,
+            )
+
+
+def draw_watermark(frame: npt.NDArray[np.uint8], text: str = WATERMARK) -> None:
+    """The author's mark in the bottom-right corner of every preview window: light text on a
+    soft shadow, readable on any background, small enough not to hide the hand."""
+    h, w = frame.shape[:2]
+    k = max(w / 1280.0, 0.5)
+    scale, thickness = 0.5 * k, max(1, round(1.3 * k))
+    plain = "".join(_DIACRITICS.get(ch, (ch, ""))[0] for ch in text)
+    (tw, text_h), _ = cv2.getTextSize(plain, FONT, scale, thickness)
+    margin = round(12 * k)
+    org = (max(margin, w - tw - margin), h - margin)
+    # Only the strip under the text is blended: the shadow is half transparent.
+    y0, y1 = max(0, org[1] - 2 * text_h - margin), h
+    strip = frame[y0:y1].copy()
+    for dx, dy in ((1, 1), (2, 2)):  # same thickness: the letters keep their widths
+        put_text_pl(strip, text, (org[0] + dx, org[1] - y0 + dy), scale, BLACK, thickness)
+    cv2.addWeighted(strip, 0.6, frame[y0:y1], 0.4, 0, dst=frame[y0:y1])
+    put_text_pl(frame, text, org, scale, WHITE, thickness)
