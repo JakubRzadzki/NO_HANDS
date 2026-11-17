@@ -177,7 +177,15 @@ def make_engine(
     cfg.validate()
     p = cfg.pointer
     roi = Roi.for_screen(frame, screen, p.roi_width, p.roi_center, p.sensitivity)
-    mapper = CursorMapper(roi, screen, cfg.filter, mode, p.edge_overshoot, p.relative_gain)
+    mapper = CursorMapper(
+        roi,
+        screen,
+        cfg.filter,
+        mode,
+        p.edge_overshoot,
+        p.relative_gain,
+        cfg.gesture.precision_catch_up,
+    )
     return GestureEngine(cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media)
 
 
@@ -190,19 +198,29 @@ class Driver:
         self.t = 0.0
         self.outputs: list[EngineOutput] = []
 
-    def step(self, pose: dict[str, Any] | None, **view: Any) -> EngineOutput:
-        """One frame. ``pose=None`` simulates a frame without a detected hand."""
+    def step(
+        self, pose: dict[str, Any] | None, second: dict[str, Any] | None = None, **view: Any
+    ) -> EngineOutput:
+        """One frame. ``pose=None`` simulates a frame without a detected hand. ``second``: the
+        other hand's pose and view (make_obs keywords), when two hands are in view."""
         obs = None if pose is None else make_obs(self.t, **view, **pose)
-        out = self.engine.update(obs, self.t)
+        other = None if second is None else make_obs(self.t, **second)
+        out = self.engine.update(obs, self.t, other)
         self.outputs.append(out)
         self.t += self.dt
         return out
 
-    def hold(self, pose: dict[str, Any] | None, seconds: float, **view: Any) -> list[Action]:
+    def hold(
+        self,
+        pose: dict[str, Any] | None,
+        seconds: float,
+        second: dict[str, Any] | None = None,
+        **view: Any,
+    ) -> list[Action]:
         """Repeat a pose for ``seconds``; returns the actions emitted meanwhile."""
         actions: list[Action] = []
         for _ in range(max(1, round(seconds / self.dt))):
-            actions += self.step(pose, **view).actions
+            actions += self.step(pose, second, **view).actions
         return actions
 
     def sweep(
@@ -211,6 +229,7 @@ class Driver:
         start: tuple[float, float],
         end: tuple[float, float],
         seconds: float,
+        second: dict[str, Any] | None = None,
         **view: Any,
     ) -> list[Action]:
         """Move the hand linearly from ``start`` to ``end`` (anchor positions) over ``seconds``."""
@@ -219,5 +238,5 @@ class Driver:
         for i in range(1, n + 1):
             a = i / n
             center = (start[0] + (end[0] - start[0]) * a, start[1] + (end[1] - start[1]) * a)
-            actions += self.step(pose, center=center, **view).actions
+            actions += self.step(pose, second, center=center, **view).actions
         return actions

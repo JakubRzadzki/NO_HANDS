@@ -39,10 +39,13 @@ from src.hand_tracker import (
     HandObservation,
 )
 from src.media_gestures import MediaGestures
-from src.os_controller import Action, Click, KeyTap, Press, Release, Scroll, Zoom
+from src.os_controller import Action, Click, KeyTap, Magnify, Press, Release, Scroll, Zoom
+from src.pinch import HysteresisLatch as HysteresisLatch
+from src.pinch import pinch_distance as pinch_distance
 from src.pointer import CursorMapper
 from src.smoother import FloatArray
 from src.swipes import SwipeDetector
+from src.two_hands import TwoHandZoom
 
 
 class Mode(str, Enum):
@@ -54,6 +57,7 @@ class Mode(str, Enum):
     SWITCH = "SWITCH"  # shaka held: toggles between mouse and media mode
     MEDIA = "MEDIA"  # music control instead of the mouse
     SLIDES = "SLIDES"  # --slides: hand strokes change slides and zoom (src/slide_gestures.py)
+    TWO_HANDS = "TWO HANDS"  # both hands in view: pinch both and pull apart / together = zoom
 
 
 class LeftState(str, Enum):
@@ -77,68 +81,11 @@ class Finger(Enum):
         return self.value[1]
 
 
+# Relaxed horns: middle and ring this much (extension ratio) below index and pinky.
+HORNS_MARGIN = 0.15
+
 # Thumb pinches: INDEX = left click / drag, MIDDLE = right click, RING = double click.
 PINCH_FINGERS = (Finger.INDEX, Finger.MIDDLE, Finger.RING)
-
-
-class HysteresisLatch:
-    """Boolean latch with separate engage/release thresholds plus frame debouncing.
-
-    low_active=True:  engages when value < engage_at, releases when value > release_at.
-    low_active=False: engages when value > engage_at, releases when value < release_at.
-
-    Two thresholds stop a signal that hovers around one boundary from toggling every frame (the
-    classic "machine-gun click"); ``confirm_frames`` additionally ignores one-frame outliers.
-    ``release_frames`` (default: the same) can make letting go slower than engaging: a held
-    mouse button must survive a couple of bad frames while the hand moves.
-    """
-
-    def __init__(
-        self,
-        engage_at: float,
-        release_at: float,
-        low_active: bool = True,
-        confirm_frames: int = 1,
-        release_frames: int | None = None,
-    ) -> None:
-        if (low_active and engage_at >= release_at) or (not low_active and engage_at <= release_at):
-            raise ValueError("the release threshold must lie on the inactive side of engage_at")
-        self.engage_at = engage_at
-        self.release_at = release_at
-        self.low_active = low_active
-        self.confirm_frames = max(1, confirm_frames)
-        self.release_frames = self.confirm_frames if release_frames is None else release_frames
-        self.active = False
-        self._streak = 0
-
-    def update(self, value: float) -> bool:
-        if self.active:
-            flip = value > self.release_at if self.low_active else value < self.release_at
-        else:
-            flip = value < self.engage_at if self.low_active else value > self.engage_at
-        if flip:
-            self._streak += 1
-            if self._streak >= (self.release_frames if self.active else self.confirm_frames):
-                self.active = not self.active
-                self._streak = 0
-        else:
-            self._streak = 0
-        return self.active
-
-    def reset(self) -> None:
-        self.active = False
-        self._streak = 0
-
-
-def pinch_distance(obs: HandObservation, a: int, b: int, depth_weight: float) -> float:
-    """Distance between two fingertips in palm lengths, depth counted at ``depth_weight``.
-
-    MediaPipe's depth (z) is its least reliable output, and its noise is as large as a pinch is
-    small. On real photos of touching fingers the image distance was 0.09-0.18 palm lengths
-    while the full 3D distance read 0.13-0.26. Some depth is still worth having: seen from
-    the side, fingers that overlap in the image can be far apart."""
-    d = obs.px[a] - obs.px[b]
-    return float(math.sqrt(d[0] ** 2 + d[1] ** 2 + (depth_weight * d[2]) ** 2)) / obs.palm_scale
 
 
 @dataclass(frozen=True)
@@ -213,6 +160,10 @@ class EngineOutput:
     volume_rate: float = 0.0  # volume key presses per second, for the HUD
     trail: list[tuple[float, float]] = field(default_factory=list)  # --slides: wrist path, px
     stroke: tuple[float, float] | None = None  # --slides: stroke so far, palm lengths
+    speed: float = 1.0  # cursor speed: < 1 = precision (fingers folded)
+    magnifier: bool = False  # the system magnifier is on
+    two_hands: tuple[tuple[float, float], tuple[float, float]] | None = None  # the two pinches
+    pinched_hands: tuple[bool, bool] = (False, False)  # two-hand mode: which hand pinches
 
 
 class GestureEngine:
@@ -240,6 +191,11 @@ class GestureEngine:
             SwipeDetector(self._slides, require_return=True) if cfg.flick_slides else None
         )
         self._media_active = False  # survives tracking loss: lowering the hand is normal here
+        self._two = TwoHandZoom(cfg) if cfg.two_hand_zoom else None
+        self._speed_level = 0  # index into cfg.precision_speeds
+        self._speed_candidate = 0
+        self._speed_frames = 0
+        self._magnify = False  # what we last asked of the system magnifier
         self._switch_since: float | None = None
         self._switch_done = False
         self._finger = {
@@ -299,6 +255,12 @@ class GestureEngine:
     def reset(self) -> list[Action]:
         """Forget all gesture state. Returns the actions needed to release anything held."""
         actions: list[Action] = [] if self._left is LeftState.IDLE else [Release("left")]
+        if self._magnify:
+            actions.append(Magnify(False))
+            self._magnify = False
+        self._speed_level = self._speed_candidate = self._speed_frames = 0
+        if self._two is not None:
+            self._two.reset()
         self._left = LeftState.IDLE
         self._pending_origin = None
         self._cursor_frozen = False
@@ -317,7 +279,10 @@ class GestureEngine:
         self.mapper.reset()
         return actions
 
-    def update(self, obs: HandObservation | None, t: float) -> EngineOutput:
+    def update(
+        self, obs: HandObservation | None, t: float, second: HandObservation | None = None
+    ) -> EngineOutput:
+        """``second``: the other hand, when two are in view (two-hand zoom)."""
         if obs is None:
             return self._on_no_hand(t)
 
@@ -333,6 +298,19 @@ class GestureEngine:
             self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
         actions: list[Action] = []
+        if self._two is not None and not self._media_active:
+            # Both hands pinch at about the same time for a two-hand zoom: with a second hand in
+            # view the cursor hand's pinch waits a few frames longer, so it cannot click first.
+            delay = self.cfg.two_hand_click_delay_frames if second is not None else 0
+            for latch in self._pinch.values():
+                latch.confirm_frames = self.cfg.pinch_confirm_frames + delay
+            # Only a pinching second hand counts. A held button keeps the hand mouse: a second
+            # hand must not end a drag.
+            pinching = self._two.second_pinched(second)
+            if pinching and self._left is LeftState.IDLE:
+                return self._two_hands(obs, features, extended, t)
+            if self._mode is Mode.TWO_HANDS:
+                actions += self._leave_two_hands()
         # An engaged pinch owns the hand: curling the other fingers mid-drag must not turn the
         # pose into a "fist" (clutch) and drop whatever is being dragged.
         if self._left is LeftState.IDLE:
@@ -353,6 +331,8 @@ class GestureEngine:
                 if features.pinch[finger] > self.cfg.pinch_exit:
                     self._armed[finger] = True
 
+        if self._mode is Mode.POINTER and self._left is LeftState.IDLE:
+            self._update_speed(extended)  # kept while the button is held: drags stay steady
         if self._mode is Mode.POINTER:
             actions += self._pointer(obs, features, t, posture_pending=pending)
         else:
@@ -372,6 +352,7 @@ class GestureEngine:
                 actions += media_actions
                 if event is not None:
                     self._set_flash(event, t, 0.5)
+        actions += self._magnifier()
 
         return EngineOutput(
             mode=self._mode,
@@ -388,7 +369,90 @@ class GestureEngine:
             media_active=self._media_active,
             knob_offset=self._media.knob_offset if self._mode is Mode.MEDIA else None,
             volume_rate=self._media.volume_rate if self._mode is Mode.MEDIA else 0.0,
+            speed=self.speed,
+            magnifier=self._magnify,
         )
+
+    # -- precision and magnifier -------------------------------------------------------------
+    @property
+    def speed(self) -> float:
+        """Cursor speed factor: 1 = full, smaller = precision (fingers folded)."""
+        return self.cfg.precision_speeds[self._speed_level]
+
+    def _update_speed(self, extended: dict[Finger, bool]) -> None:
+        """Fold middle / ring / pinky to slow the cursor. The index is not counted: it makes the
+        pinch, and clicking must never change the speed."""
+        folded = sum(not extended[f] for f in (Finger.MIDDLE, Finger.RING, Finger.PINKY))
+        level = min(folded, len(self.cfg.precision_speeds) - 1)
+        if level == self._speed_level:
+            self._speed_frames = 0
+            return
+        if level == self._speed_candidate:
+            self._speed_frames += 1
+        else:
+            self._speed_candidate, self._speed_frames = level, 1
+        if self._speed_frames >= self.cfg.precision_confirm_frames:
+            self._speed_level, self._speed_frames = level, 0
+
+    def _magnifier(self) -> list[Action]:
+        """The system magnifier is on at the slowest speed (and stays on during a drag)."""
+        slowest = len(self.cfg.precision_speeds) - 1
+        want = (
+            self.cfg.magnifier
+            and self._mode is Mode.POINTER
+            and (
+                self._speed_level == slowest or (self._magnify and self._left is not LeftState.IDLE)
+            )
+        )
+        if want == self._magnify:
+            return []
+        self._magnify = want
+        return [Magnify(want)]
+
+    # -- two hands ---------------------------------------------------------------------------
+    def _two_hands(
+        self, obs: HandObservation, features: HandFeatures, extended: dict[Finger, bool], t: float
+    ) -> EngineOutput:
+        """The other hand pinches: the cursor holds still, nothing clicks, and with this hand
+        pinched too, pulling the hands apart / together zooms."""
+        assert self._two is not None
+        actions: list[Action] = []
+        if self._mode is not Mode.TWO_HANDS:
+            previous, self._mode = self._mode, Mode.TWO_HANDS
+            self._candidate, self._candidate_frames = None, 0
+            actions += self._on_mode_change(previous)
+        actions += self._magnifier()
+        if self._swipes is not None:
+            self._swipes.reset()
+        self._cursor_frozen = True
+        self.mapper.update(features.anchor, t, frozen=True)  # keep the filter converged
+        zoom = self._two.update(obs)
+        if zoom:
+            self._set_flash("ZOOM IN" if zoom[0].steps > 0 else "ZOOM OUT", t, 0.4)
+        actions += zoom
+        return EngineOutput(
+            mode=Mode.TWO_HANDS,
+            label=self._label(t),
+            actions=actions,
+            cursor_frozen=True,
+            features=features,
+            extended=extended,
+            media_active=self._media_active,
+            speed=self.speed,
+            two_hands=self._two.points,
+            pinched_hands=self._two.pinched,
+        )
+
+    def _leave_two_hands(self) -> list[Action]:
+        """Back to one hand. Its fingers may still be pinched: that must not click."""
+        assert self._two is not None
+        self._two.reset()
+        self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
+        self._candidate, self._candidate_frames = None, 0
+        for latch in self._pinch.values():
+            latch.reset()
+        self._armed = dict.fromkeys(PINCH_FINGERS, False)
+        return []
 
     # -- tracking loss -----------------------------------------------------------------------
     def _on_no_hand(self, t: float) -> EngineOutput:
@@ -418,6 +482,14 @@ class GestureEngine:
             return Mode.SWITCH  # shaka: only the pinky (and the thumb) out
         if i and p and not m and not r:
             return Mode.ZOOM
+        if i and p and self.cfg.horns_relaxed:
+            # Middle and ring only half folded still make the horns - but only when they are
+            # clearly lower than index and pinky: a relaxed open hand has all four alike.
+            e = f.extension
+            low = min(e[Finger.INDEX], e[Finger.PINKY]) - HORNS_MARGIN
+            straight = self.cfg.finger_extended_above
+            if max(e[Finger.MIDDLE], e[Finger.RING]) < min(straight, low):
+                return Mode.ZOOM
         if i and m and not r and not p and joined:
             return Mode.SCROLL
         return Mode.POINTER
@@ -552,7 +624,7 @@ class GestureEngine:
                 or settling
             )
         self._cursor_frozen = frozen
-        move = self.mapper.update(f.anchor, t, frozen=frozen)
+        move = self.mapper.update(f.anchor, t, frozen=frozen, speed=self.speed)
         if move is not None:
             actions.append(move)  # after Press: the drag starts where the pinch began
 

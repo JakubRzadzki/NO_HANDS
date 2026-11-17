@@ -49,7 +49,7 @@ class Hand:
     def frame(self, pose: dict[str, Any] | None = OPEN) -> list[Action]:
         if pose is None:
             return self.d.step(None).actions
-        view = {"center": self.pos, "roll_deg": self.roll, "pivot": "wrist"}
+        view: dict[str, Any] = {"center": self.pos, "roll_deg": self.roll, "pivot": "wrist"}
         return self.d.step(pose, palm_px=self.palm_px, **view).actions
 
     def hold(self, seconds: float, pose: dict[str, Any] | None = OPEN) -> list[Action]:

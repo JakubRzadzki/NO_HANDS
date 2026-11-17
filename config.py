@@ -133,6 +133,34 @@ class GestureConfig:
     finger_extended_above: float = 1.12
     finger_curled_below: float = 1.00
     posture_confirm_frames: int = 3  # a new mode must be seen this many frames in a row
+    # The horns (zoom) need middle + ring folded. Few people fold them all the way while the
+    # pinky is out, so for the horns "not straight" (below finger_extended_above) is enough.
+    horns_relaxed: bool = True
+
+    # Precision: fold fingers to slow the cursor down. Counted are the middle, ring and pinky
+    # fingers (the index makes the pinch, so clicking never changes the speed):
+    # all three out = full speed; one folded (e.g. the pinky) = slower; two or three folded
+    # (e.g. a V: index + middle apart) = slowest.
+    precision_speeds: tuple[float, float, float] = (1.0, 0.5, 0.25)
+    precision_confirm_frames: int = 4  # a new speed must be seen this many frames in a row
+    # Absolute mode: after slow movement the cursor is off the spot the hand points at. Back at
+    # full speed the gap closes by this fraction of the hand's travel (the cursor moves up to
+    # 1.5x / 0.5x as fast as the hand until it is back), so the cursor never jumps.
+    precision_catch_up: float = 0.5
+    # Magnifier: the system's screen magnifier (Windows: Magnifier, Win + Plus; macOS: Zoom,
+    # Option + Cmd + 8, must be enabled in Accessibility; Linux GNOME: Super + Alt + 8) comes on
+    # at the slowest precision speed and goes off when the hand opens again.
+    magnifier: bool = True
+
+    # Zoom with two hands: pinch thumb + index on both hands and pull them apart (zoom in) or
+    # together (zoom out), like two fingers on a touchscreen. While the other hand pinches, the
+    # cursor holds still and nothing clicks; a second hand that does not pinch changes nothing.
+    two_hand_zoom: bool = True
+    two_hand_zoom_step: float = 0.12  # one zoom step per 12% change of the hands' distance
+    two_hand_grace_frames: int = 5  # the other hand may be lost this long mid-zoom
+    # With a second hand in view, a pinch of the cursor hand waits this many frames longer:
+    # both hands pinch at about the same time, and the first must not click meanwhile.
+    two_hand_click_delay_frames: int = 4
 
     # Scroll: index + middle extended and touching, ring + pinky curled. Works like a joystick:
     # displacement from where the gesture started sets the scroll *speed*.
@@ -331,6 +359,16 @@ class AppConfig:
             (0 <= g.pinch_depth_weight <= 1, "pinch_depth_weight must be in [0, 1]"),
             (g.pinch_release_frames >= 1, "pinch_release_frames must be >= 1"),
             (g.flick_distance > 0 and g.flick_speed > 0, "flick distance / speed must be > 0"),
+            (
+                len(g.precision_speeds) == 3 and all(0 < v <= 1 for v in g.precision_speeds),
+                "precision_speeds: three values in (0, 1]",
+            ),
+            (0 < g.precision_catch_up <= 1, "precision_catch_up must be in (0, 1]"),
+            (g.two_hand_zoom_step > 0, "two_hand_zoom_step must be > 0"),
+            (
+                g.two_hand_grace_frames >= 0 and g.two_hand_click_delay_frames >= 0,
+                "two_hand_grace_frames / two_hand_click_delay_frames must be >= 0",
+            ),
             (
                 0 <= g.hand_lost_grace <= g.drag_lost_grace,
                 "need 0 <= hand_lost_grace <= drag_lost_grace",

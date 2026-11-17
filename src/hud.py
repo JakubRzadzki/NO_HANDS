@@ -74,7 +74,7 @@ def state_color(out: EngineOutput, paused: bool) -> Color:
         return RED
     if out.mode is Mode.SCROLL:
         return YELLOW
-    if out.mode is Mode.ZOOM:
+    if out.mode is Mode.ZOOM or out.mode is Mode.TWO_HANDS or out.two_hands is not None:
         return MAGENTA
     if out.mode is Mode.MEDIA:
         return ORANGE
@@ -121,9 +121,10 @@ class Hud:
         out: EngineOutput,
         stats: LoopStats,
         paused: bool,
+        second: HandObservation | None = None,
     ) -> None:
         """Draw in place on ``frame`` (the mirrored camera image). ``roi`` is None in --slides,
-        which has no cursor."""
+        which has no cursor. ``second`` is the other hand, when two are in view."""
         h, w = frame.shape[:2]
         color = state_color(out, paused)
         if roi is not None:
@@ -146,8 +147,24 @@ class Hud:
                 anchor = (int(ax * w), int(ay * h))
                 cv2.circle(frame, anchor, 8, color, -1, cv2.LINE_AA)
                 cv2.circle(frame, anchor, 9, BLACK, 1, cv2.LINE_AA)
+        if second is not None and self.show_landmarks:
+            pts = np.rint(second.norm[:, :2] * (w, h)).astype(int)
+            for a, b in HAND_CONNECTIONS:
+                cv2.line(frame, _pt(pts[a]), _pt(pts[b]), MAGENTA, 1, cv2.LINE_AA)
+        self._draw_two_hands(frame, out)
 
         self._draw_panel(frame, out, stats, paused)
+
+    @staticmethod
+    def _draw_two_hands(frame: npt.NDArray[np.uint8], out: EngineOutput) -> None:
+        """Two-hand zoom: a line between the two pinches; its length is the zoom."""
+        if out.two_hands is None:
+            return
+        a, b = ((int(x), int(y)) for x, y in out.two_hands)
+        cv2.line(frame, a, b, MAGENTA, 3, cv2.LINE_AA)
+        for p in (a, b):
+            cv2.circle(frame, p, 9, MAGENTA, -1, cv2.LINE_AA)
+            cv2.circle(frame, p, 10, BLACK, 1, cv2.LINE_AA)
 
     def _draw_gesture_overlay(
         self, frame: npt.NDArray[np.uint8], pts: npt.NDArray[np.int_], out: EngineOutput
@@ -222,18 +239,28 @@ class Hud:
                 lines.append((knob, 0.45, ORANGE))
             if out.pending_mode is not None:
                 lines.append((f"switching to {out.pending_mode.value}...", 0.45, GRAY))
+            if out.mode is Mode.POINTER and out.speed < 1.0:
+                lens = "   magnifier on" if out.magnifier else ""
+                lines.append((f"PRECISION: cursor speed {out.speed:.0%}{lens}", 0.5, GREEN))
         if out.media_active:
             lines.append(
                 ("MEDIA MODE: swipe = prev/next, turn = volume, fist = play", 0.45, ORANGE)
             )
         if out.mode is Mode.CLUTCH:
             lines.append(("fist = pause. To click, keep the other fingers open.", 0.45, YELLOW))
+        if out.mode is Mode.TWO_HANDS:
+            done = sum(out.pinched_hands)
+            lines.append((f"TWO HANDS: pinch both ({done}/2), pull apart = zoom in", 0.5, MAGENTA))
         if not out.media_active:
             lines.append(("thumb + index: button down while they touch (click / drag)", 0.4, GRAY))
             lines.append(("thumb + middle: right click   2 quick pinches: double click", 0.4, GRAY))
             lines.append(
                 ("flick the open hand sideways and back: previous / next slide", 0.4, GRAY)
             )
+            lines.append(
+                ("fold the pinky: slower   V (index + middle): slowest + magnifier", 0.4, GRAY)
+            )
+            lines.append(("both hands pinched, pull apart / together: zoom", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)
@@ -262,6 +289,7 @@ class Hud:
         lines.append(("move the open hand left / right = previous / next slide", 0.4, GRAY))
         lines.append(("quick pinch thumb + index = next slide", 0.4, GRAY))
         lines.append(("pinch and move up / down = zoom in / out", 0.4, GRAY))
+        lines.append(("or: both hands pinched, pull apart / together", 0.4, GRAY))
         lines.append(("move a fist to reposition the hand without swiping", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   ctrl+alt+p / ctrl+alt+q from anywhere", 0.4, GRAY))
 

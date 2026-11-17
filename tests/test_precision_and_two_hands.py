@@ -1,0 +1,204 @@
+"""Precision (fold fingers to slow the cursor), the magnifier, the relaxed horns and the zoom with
+two hands, on synthetic hands."""
+
+from __future__ import annotations
+
+import itertools
+from typing import Any
+
+from config import AppConfig
+from src.gesture_engine import LeftState, Mode
+from src.os_controller import Action, Magnify, MoveTo, Press, Release, Zoom
+from src.slide_gestures import SlideGestures
+from tests.handgen import CENTER, OPEN, VICTORY, Driver, make_engine, pinch
+
+PINKY_FOLDED: dict[str, Any] = {"curl": {"pinky": 1.0}}
+
+
+def of(actions: list[Action], kind: type) -> list[Any]:
+    return [a for a in actions if isinstance(a, kind)]
+
+
+def settled(**overrides: Any) -> Driver:
+    d = Driver(make_engine(**overrides), fps=60.0)
+    d.hold(OPEN, 0.5)
+    return d
+
+
+def cursor_travel(d: Driver, pose: dict[str, Any], dx: float) -> float:
+    """Screen px the cursor moves while the hand moves dx (frame widths) to the right."""
+    d.hold(pose, 0.3)  # the new speed is confirmed
+    start = d.engine.mapper.target[0]
+    d.sweep(pose, CENTER, (CENTER[0] + dx, CENTER[1]), 0.4)
+    d.hold(pose, 0.5, center=(CENTER[0] + dx, CENTER[1]))  # the filter catches up
+    end = d.engine.mapper.target[0]
+    d.sweep(pose, (CENTER[0] + dx, CENTER[1]), CENTER, 0.4)
+    d.hold(pose, 0.5)
+    return float(end - start)
+
+
+# -- precision -----------------------------------------------------------------------------------
+def test_folding_fingers_slows_the_cursor_down() -> None:
+    d = settled()
+    full = cursor_travel(d, OPEN, 0.08)
+    assert d.outputs[-1].speed == 1.0
+    half = cursor_travel(d, PINKY_FOLDED, 0.08)
+    assert d.outputs[-1].speed == 0.5
+    quarter = cursor_travel(d, VICTORY, 0.08)
+    assert d.outputs[-1].speed == 0.25
+    assert abs(half / full - 0.5) < 0.05 and abs(quarter / full - 0.25) < 0.05
+
+
+def test_back_to_full_speed_the_cursor_does_not_jump() -> None:
+    """After slow movement the cursor is off the spot the hand points at. That offset fades
+    while the hand moves; it never jumps the cursor."""
+    d = settled(magnifier=False)
+    d.hold(VICTORY, 0.3)
+    d.sweep(VICTORY, CENTER, (0.6, 0.55), 0.5)
+    actions = d.hold(OPEN, 0.5, center=(0.6, 0.55)) + d.sweep(OPEN, (0.6, 0.55), CENTER, 0.6)
+    moves = [(m.x, m.y) for m in of(actions, MoveTo)]
+    steps = [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in itertools.pairwise(moves)]
+    assert max(steps) < 60  # px per frame at 60 FPS: smooth, no jump
+    d.sweep(OPEN, CENTER, (0.6, 0.55), 0.6)
+    d.sweep(OPEN, (0.6, 0.55), CENTER, 0.6)
+    d.hold(OPEN, 0.5)
+    assert abs(float(d.engine.mapper._offset[0])) < 1.0  # caught up with the hand again
+
+
+def test_the_magnifier_comes_with_the_slowest_speed_and_goes_with_it() -> None:
+    d = settled()
+    on = d.hold(PINKY_FOLDED, 0.3)
+    assert of(on, Magnify) == []  # one finger folded: slower, no magnifier
+    on = d.hold(VICTORY, 0.3)
+    assert of(on, Magnify) == [Magnify(True)] and d.outputs[-1].magnifier
+    off = d.hold(OPEN, 0.3)
+    assert of(off, Magnify) == [Magnify(False)] and not d.outputs[-1].magnifier
+
+
+def test_the_magnifier_goes_off_when_the_hand_is_lost() -> None:
+    d = settled()
+    d.hold(VICTORY, 0.3)
+    assert of(d.hold(None, 1.0), Magnify) == [Magnify(False)]
+
+
+def test_clicking_in_precision_mode_keeps_the_speed() -> None:
+    """The index makes the pinch and is not counted: a click never changes the speed."""
+    d = settled()
+    d.hold(VICTORY, 0.3)
+    actions = d.hold({**VICTORY, **pinch("index")}, 0.15) + d.hold(VICTORY, 0.3)
+    assert of(actions, Press) == [Press("left")] and of(actions, Release) == [Release("left")]
+    assert all(out.speed == 0.25 for out in d.outputs[-30:])
+
+
+# -- zoom ----------------------------------------------------------------------------------------
+def test_the_horns_with_half_folded_fingers_still_zoom() -> None:
+    """Few people fold middle and ring all the way while the pinky is out."""
+    half = {"curl": {"middle": 0.47, "ring": 0.47}}  # ratio ~1.09: not straight, not folded
+    d = settled()
+    d.hold(half, 0.3)
+    assert d.engine.mode is Mode.ZOOM
+    d = settled(horns_relaxed=False)
+    d.hold(half, 0.3)
+    assert d.engine.mode is Mode.POINTER
+
+
+def left_hand(x: float, pose: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"center": (x, 0.55), **(pose or OPEN)}
+
+
+def test_two_hands_pinched_and_pulled_apart_zoom_in_and_together_zoom_out() -> None:
+    d = settled()
+    d.hold(OPEN, 0.2, second=left_hand(0.3))
+    assert d.engine.mode is Mode.POINTER  # a second hand that does not pinch changes nothing
+    grab = pinch("index")
+    d.hold(OPEN, 0.1, second=left_hand(0.3, grab))
+    assert d.engine.mode is Mode.TWO_HANDS and d.outputs[-1].cursor_frozen
+    actions = d.hold(grab, 0.2, second=left_hand(0.3, grab))
+    assert of(actions, Press) == []  # both hands pinched: a zoom, never a click
+    apart: list[Action] = []
+    for i in range(1, 31):  # the left hand moves away: 0.2 -> 0.3 frame widths apart (+50%)
+        apart += d.step(grab, left_hand(0.3 - 0.1 * i / 30, grab)).actions
+    assert of(apart, Zoom) == [Zoom(1)] * 3  # one step per 12%: 1.12^3 < 1.5 < 1.12^4
+    together: list[Action] = []
+    for i in range(1, 31):
+        together += d.step(grab, left_hand(0.2 + 0.1 * i / 30, grab)).actions
+    assert of(together, Zoom) == [Zoom(-1)] * 3
+    assert of(apart + together, Press) == []
+
+
+def test_both_hands_pinching_at_once_never_click() -> None:
+    """Both hands come up and pinch at about the same time; the cursor hand must not win the
+    race and click before the other hand's pinch is seen."""
+    d = settled()
+    grab = pinch("index")
+    actions = d.hold(grab, 0.4, second=left_hand(0.3, grab)) + d.hold(OPEN, 0.3)
+    assert of(actions, Press) == [] and of(actions, Release) == []
+
+
+def test_after_two_hands_the_still_pinched_hand_does_not_click() -> None:
+    d = settled()
+    grab = pinch("index")
+    d.hold(grab, 0.3, second=left_hand(0.3, grab))
+    actions = d.hold(grab, 0.3) + d.hold(OPEN, 0.3)  # the left hand goes, the right still pinched
+    assert d.engine.mode is Mode.POINTER
+    assert of(actions, Press) == [] and of(actions, Release) == []
+    assert of(d.hold(grab, 0.15) + d.hold(OPEN, 0.3), Press) == [Press("left")]  # clicks again
+
+
+def test_a_resting_second_hand_changes_nothing() -> None:
+    """The presenter's other hand on the forehead, on the desk, holding a remote: the cursor
+    moves, clicks work. (A first version stopped everything as soon as two hands were seen.)"""
+    d = settled()
+    other = left_hand(0.3)
+    d.hold(OPEN, 0.5, second=other)
+    moves = d.sweep(OPEN, CENTER, (0.55, 0.55), 0.3, second=other)
+    assert of(moves, MoveTo) and all(out.mode is Mode.POINTER for out in d.outputs[-20:])
+    grab = pinch("index")
+    clicked = d.hold(grab, 0.2, center=(0.55, 0.55), second=other)
+    clicked += d.hold(OPEN, 0.3, center=(0.55, 0.55), second=other)
+    assert of(clicked, Press) == [Press("left")] and of(clicked, Release) == [Release("left")]
+
+
+def test_a_second_hand_does_not_end_a_drag() -> None:
+    d = settled()
+    grab = pinch("index")
+    d.hold(grab, 0.4)
+    assert d.engine.left_state is LeftState.DRAG
+    actions = d.hold(grab, 0.3, second=left_hand(0.3, grab))
+    assert of(actions, Release) == [] and d.engine.left_state is LeftState.DRAG
+
+
+def test_two_hand_zoom_can_be_switched_off() -> None:
+    d = settled(two_hand_zoom=False)
+    grab = pinch("index")
+    d.hold(OPEN, 0.3, second=left_hand(0.3, grab))
+    assert d.engine.mode is Mode.POINTER
+
+
+def slides_driver() -> Driver:
+    cfg = AppConfig()
+    d = Driver(SlideGestures(cfg.slides, cfg.gesture), fps=60.0)
+    d.hold(OPEN, 0.6)
+    return d
+
+
+def test_two_hand_zoom_in_slides_mode_is_not_a_next_slide() -> None:
+    d = slides_driver()
+    grab = pinch("index")
+    d.hold(grab, 0.2, second=left_hand(0.3, grab))
+    apart: list[Action] = []
+    for i in range(1, 31):
+        apart += d.step(grab, left_hand(0.3 - 0.1 * i / 30, grab)).actions
+    assert of(apart, Zoom) == [Zoom(1)] * 3
+    after = d.hold(grab, 0.3) + d.hold(OPEN, 0.5)  # the left hand goes; the right lets go
+    assert after == []  # letting go of that pinch is not "next slide"
+
+
+def test_a_resting_second_hand_does_not_block_swipes() -> None:
+    """Found on the test video: a presenter with one hand on her forehead."""
+    d = slides_driver()
+    other = left_hand(0.2)
+    d.hold(OPEN, 0.5, second=other)
+    swipe = d.sweep(OPEN, CENTER, (0.7, 0.55), 0.3, second=other)
+    swipe += d.hold(OPEN, 0.5, center=(0.7, 0.55), second=other)
+    assert [a.key for a in swipe if hasattr(a, "key")] == ["right"]

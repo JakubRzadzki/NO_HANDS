@@ -3,6 +3,7 @@
     quick stroke left / right .............. Left / Right arrow (previous / next slide)
     quick pinch thumb + index .............. Right arrow (next slide), like a click would
     pinch thumb + index, move up / down .... zoom in / out (Ctrl + mouse wheel)
+    pinch both hands, pull apart / together  zoom in / out (src/two_hands.py)
 
 The strokes come from ``src.swipes.SwipeDetector`` (see there for what counts as a swipe and
 what does not). Here a swipe counts the moment the stroke ends; the hand does not have to come
@@ -32,6 +33,7 @@ from src.gesture_engine import (
 from src.hand_tracker import HandObservation
 from src.os_controller import Action, KeyTap, Zoom
 from src.swipes import Stroke, SwipeDetector
+from src.two_hands import TwoHandZoom
 
 MAX_GAP = 0.15  # s: tracking may drop out this long mid-stroke (motion blur) without a reset
 ACTIONS = {"right": "RIGHT >>", "left": "<< LEFT"}
@@ -42,6 +44,7 @@ class Phase(str, Enum):
     READY = "READY"
     STROKE = "STROKE"  # a fast movement is under way
     ZOOM = "ZOOM"  # pinched: vertical movement zooms
+    TWO_HANDS = "TWO HANDS"  # both hands in view: pinch both, pull apart / together = zoom
 
 
 class SlideGestures:
@@ -62,9 +65,13 @@ class SlideGestures:
         self._last_seen: float | None = None
         self._flash = ""
         self._flash_until = -math.inf
+        self._two = TwoHandZoom(gesture) if gesture.two_hand_zoom else None
+        self._two_active = False  # the other hand pinches: two-hand zoom
 
     @property
     def phase(self) -> Phase:
+        if self._two_active:
+            return Phase.TWO_HANDS
         if self._pinch.active:
             return Phase.ZOOM
         if self._swipes.moving:
@@ -79,12 +86,18 @@ class SlideGestures:
         """Forget motion state (pause, hand lost). Nothing is ever held, so nothing to release."""
         self._swipes.reset()
         self._pinch.reset()
+        if self._two is not None:
+            self._two.reset()
+        self._two_active = False
         self._armed = False
         self._zoom_ref = None
         self._last_seen = None
         return []
 
-    def update(self, obs: HandObservation | None, t: float) -> EngineOutput:
+    def update(
+        self, obs: HandObservation | None, t: float, second: HandObservation | None = None
+    ) -> EngineOutput:
+        """``second``: the other hand, when two are in view (two-hand zoom)."""
         if obs is None:
             if self._last_seen is None or t - self._last_seen > MAX_GAP:
                 self.reset()
@@ -97,6 +110,20 @@ class SlideGestures:
         not_curled = {f: features.extension[f] > g.finger_curled_below for f in Finger}
         centroid = obs.px[:, :2].mean(axis=0)
         self._palm = obs.palm_scale
+
+        if self._two is not None:
+            # A pinch of this hand waits a little longer while a second hand is in view: both
+            # hands pinch at about the same time for a zoom, and this one must not turn the
+            # slide first. Only a pinching second hand counts; any other changes nothing.
+            delay = self.gesture.two_hand_click_delay_frames if second is not None else 0
+            self._pinch.confirm_frames = self.gesture.pinch_confirm_frames + delay
+            was_two, self._two_active = self._two_active, self._two.second_pinched(second)
+            if self._two_active:
+                return self._two_hands(obs, features, t)
+            self._two_active = False
+            if was_two:  # back to one hand, maybe still pinched: that is not "next slide"
+                self._pinch.reset()
+                self._armed = False
 
         actions = self._pinch_actions(features, float(centroid[1]), t)
         if self._pinch.active:
@@ -118,6 +145,23 @@ class SlideGestures:
             extended=not_curled,
             trail=self._swipes.trail,
             stroke=self._swipes.stroke,
+        )
+
+    def _two_hands(self, obs: HandObservation, features: HandFeatures, t: float) -> EngineOutput:
+        assert self._two is not None
+        self._swipes.cancel()
+        self._pinch.reset()  # this hand's pinch now belongs to the zoom: no "next slide" later
+        self._zoom_ref = None
+        zoom = self._two.update(obs)
+        if zoom:
+            self._set_flash("ZOOM IN" if zoom[0].steps > 0 else "ZOOM OUT", t, 0.4)
+        return EngineOutput(
+            Mode.SLIDES,
+            self._label(t, Phase.TWO_HANDS.value),
+            list(zoom),
+            features=features,
+            two_hands=self._two.points,
+            pinched_hands=self._two.pinched,
         )
 
     # -- pinch: next slide, or zoom ------------------------------------------------------------

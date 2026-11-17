@@ -55,6 +55,7 @@ class ScriptedTracker:
     def __init__(self, cfg: TrackerConfig) -> None:
         self.last_inference_ms = 5.0
         self.frames = 0
+        self.second: HandObservation | None = None  # one hand only
 
     def __enter__(self) -> ScriptedTracker:
         return self
@@ -221,6 +222,7 @@ class StrokeTracker:
     def __init__(self, cfg: TrackerConfig) -> None:
         self.last_inference_ms = 5.0
         self.frames = 0
+        self.second: HandObservation | None = None  # one hand only
 
     def __enter__(self) -> StrokeTracker:
         return self

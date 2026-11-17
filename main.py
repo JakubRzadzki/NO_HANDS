@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import cv2
@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Windows: open the camera driver's settings (exposure, low-light compensation)",
     )
     p.add_argument(
+        "--no-two-hands",
+        action="store_true",
+        help="track one hand only: no two-hand zoom, the tracker is about twice as fast",
+    )
+    p.add_argument(
         "--no-hud",
         action="store_true",
         help="no preview window (less CPU); quit with ctrl+alt+q or Ctrl+C in the terminal",
@@ -149,6 +154,8 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     cfg.output.dry_run = args.dry_run
     cfg.output.screen_size = args.screen
     cfg.hud.enabled = not args.no_hud
+    if args.no_two_hands:
+        cfg.gesture.two_hand_zoom = False
     cfg.hotkeys.enabled = not args.no_hotkeys
     cfg.validate()
     return cfg
@@ -382,7 +389,12 @@ def run(cfg: AppConfig) -> int:
         # release_all is registered after the tracker, so it runs first on *any* exit (normal,
         # exception, Ctrl+C): a mouse button or Ctrl key must never stay held after we are gone.
         if cfg.input_mode in ("hands", "slides"):
-            hands = stack.enter_context(HandTracker(cfg.tracker))
+            # Two hands are tracked only for the two-hand zoom: MediaPipe then runs its palm
+            # detector on every frame with one hand in view, which costs some speed.
+            tracker_cfg = cfg.tracker
+            if cfg.gesture.two_hand_zoom:
+                tracker_cfg = replace(tracker_cfg, num_hands=max(2, tracker_cfg.num_hands))
+            hands = stack.enter_context(HandTracker(tracker_cfg))
             stack.callback(controller.release_all)
             return _hands_loop(session, hands)
         face = stack.enter_context(FaceTracker(cfg.face, cfg.camera.mirror))
@@ -399,7 +411,15 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
         engine = SlideGestures(cfg.slides, cfg.gesture)  # no cursor: the hand only swipes
     else:
         roi = Roi.for_screen(camera.frame_size, s.screen, p.roi_width, p.roi_center, p.sensitivity)
-        mapper = CursorMapper(roi, s.screen, cfg.filter, p.mode, p.edge_overshoot, p.relative_gain)
+        mapper = CursorMapper(
+            roi,
+            s.screen,
+            cfg.filter,
+            p.mode,
+            p.edge_overshoot,
+            p.relative_gain,
+            cfg.gesture.precision_catch_up,
+        )
         engine = GestureEngine(
             cfg.gesture, mapper, p.anchor_index_mcp_weight, cfg.media, cfg.slides
         )
@@ -436,7 +456,7 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
             out = EngineOutput(Mode.NO_HAND, "PAUSED")
         else:
             obs = tracker.process(packet.frame, packet.timestamp)
-            out = engine.update(obs, packet.timestamp)
+            out = engine.update(obs, packet.timestamp, tracker.second)
             controller.apply(out.actions)
         stats.update(
             time.perf_counter(),
@@ -447,7 +467,7 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
         )
 
         if hud is not None:
-            hud.draw(packet.frame, roi, obs, out, stats, paused)
+            hud.draw(packet.frame, roi, obs, out, stats, paused, tracker.second)
             _show(cfg.hud.window_name, packet.frame)
             notes.after_show(packet.frame, stats)
             key = cv2.waitKey(1) & 0xFF
