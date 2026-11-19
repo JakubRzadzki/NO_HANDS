@@ -375,3 +375,33 @@ def test_preview_notes_warn_when_the_loop_is_slower_than_the_camera(
 def test_camera_settings_flag() -> None:
     args = main.build_parser().parse_args(["--camera-settings"])
     assert main.config_from_args(args).camera.open_settings
+
+
+def test_clicks_on_the_preview_window_are_dropped_releases_are_not() -> None:
+    """The program must not click on itself: on Windows a press on the preview's title bar
+    starts moving the window, which waits for a release only the stuck loop could send."""
+    from src.os_controller import Action, Click, MoveTo, Press, Release
+
+    rect = (100, 50, 900, 600)  # the window on the screen, title bar included
+    actions: list[Action] = [MoveTo(400, 300), Press("left"), Click("right")]
+    kept, dropped = main.keep_off_preview(actions, (400.0, 300.0), rect)
+    assert kept == [MoveTo(400, 300)] and dropped
+    kept, dropped = main.keep_off_preview(actions, (1200.0, 300.0), rect)  # elsewhere
+    assert kept == actions and not dropped
+    release: list[Action] = [Release("left")]
+    kept, dropped = main.keep_off_preview(release, (400.0, 300.0), rect)
+    assert kept == [Release("left")] and not dropped  # a held button is always let go
+    assert main.keep_off_preview(actions, None, rect) == (actions, False)
+    assert main.keep_off_preview(actions, (400.0, 300.0), None) == (actions, False)
+
+
+def test_the_preview_rect_includes_the_title_bar(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main.cv2, "getWindowImageRect", lambda name: (40, 80, 1280, 720))
+    x0, y0, x1, y1 = main.preview_rect("preview") or (0, 0, 0, 0)
+    assert x0 < 40 and y0 <= 80 - 40 and x1 > 1320 and y1 > 800
+
+    def missing(name: str) -> None:
+        raise main.cv2.error("no such window")
+
+    monkeypatch.setattr(main.cv2, "getWindowImageRect", missing)
+    assert main.preview_rect("preview") is None

@@ -35,7 +35,14 @@ from src.gesture_engine import EngineOutput, GestureEngine, Mode
 from src.hand_tracker import HandTracker
 from src.head_engine import HeadArrows
 from src.hud import FaceHud, Hud, LoopStats, draw_watermark
-from src.os_controller import OSController, detect_screen_size, enable_dpi_awareness
+from src.os_controller import (
+    Action,
+    Click,
+    OSController,
+    Press,
+    detect_screen_size,
+    enable_dpi_awareness,
+)
 from src.pointer import CursorMapper, Roi
 from src.slide_gestures import SlideGestures
 
@@ -260,6 +267,40 @@ class _Session:
     pause_toggle: threading.Event  # set by the hotkey thread or the p key
 
 
+# The preview window without toolbar, status bar and context menu: on Qt builds of OpenCV a
+# right click opened a menu that stopped the main loop until it was closed.
+PREVIEW_FLAGS = cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL
+PREVIEW_MARGIN = (16, 48)  # px around the picture: the borders, and the title bar above it
+
+
+def preview_rect(name: str) -> tuple[int, int, int, int] | None:
+    """Where the preview window is on the screen (x0, y0, x1, y1), title bar included."""
+    try:
+        x, y, w, h = cv2.getWindowImageRect(name)
+    except cv2.error:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    side, top = PREVIEW_MARGIN
+    return x - side, y - top, x + w + side, y + h + side
+
+
+def keep_off_preview(
+    actions: list[Action], cursor: Any, rect: tuple[int, int, int, int] | None
+) -> tuple[list[Action], bool]:
+    """Drop presses and clicks that would land on our own preview window. Clicking on itself
+    the program gains nothing, and on Windows a press on the title bar starts moving the
+    window, which waits for the button to come up - a release only this loop can send.
+    Releases always go through, so a button held from elsewhere is never stuck."""
+    if rect is None or cursor is None:
+        return actions, False
+    x0, y0, x1, y1 = rect
+    if not (x0 <= float(cursor[0]) <= x1 and y0 <= float(cursor[1]) <= y1):
+        return actions, False
+    kept: list[Action] = [a for a in actions if not isinstance(a, (Press, Click))]
+    return kept, len(kept) != len(actions)
+
+
 def _show(name: str, frame: Any) -> None:
     height, width = frame.shape[:2]
     if width > HUD_DISPLAY_WIDTH:
@@ -274,7 +315,7 @@ def camera_test(cfg: AppConfig) -> int:
     picture, the camera and the preview window work and the problem is somewhere else."""
     name = cfg.hud.window_name
     with ThreadedCamera(cfg.camera) as camera:
-        cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(name, PREVIEW_FLAGS)
         window = _WindowWatch(name)
         notes = _PreviewNotes(name)
         last_seq = -1
@@ -432,10 +473,11 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
     window = _WindowWatch(cfg.hud.window_name)
     notes = _PreviewNotes(cfg.hud.window_name)
     if hud is not None:
-        cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(cfg.hud.window_name, PREVIEW_FLAGS)
     stats = LoopStats()
     paused = False
     last_seq = -1
+    warned_preview_click = False
 
     while not s.stop.is_set():
         packet = camera.read(after_seq=last_seq, timeout=1.0)
@@ -461,7 +503,19 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
         else:
             obs = tracker.process(packet.frame, packet.timestamp)
             out = engine.update(obs, packet.timestamp, tracker.second)
-            controller.apply(out.actions)
+            actions = out.actions
+            if hud is not None and isinstance(engine, GestureEngine):
+                actions, dropped = keep_off_preview(
+                    actions, engine.mapper.target, preview_rect(cfg.hud.window_name)
+                )
+                if dropped and not warned_preview_click:
+                    warned_preview_click = True
+                    log.warning(
+                        "A click on the preview window was ignored: the program would click on "
+                        "itself (on Windows, a press on its title bar can freeze it). Move the "
+                        "preview aside, or point elsewhere."
+                    )
+            controller.apply(actions)
         stats.update(
             time.perf_counter(),
             packet.timestamp,
@@ -531,7 +585,7 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
     window = _WindowWatch(cfg.hud.window_name)
     notes = _PreviewNotes(cfg.hud.window_name)
     if hud is not None:
-        cv2.namedWindow(cfg.hud.window_name, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(cfg.hud.window_name, PREVIEW_FLAGS)
     stats = LoopStats()
     paused = False
     last_seq = -1
