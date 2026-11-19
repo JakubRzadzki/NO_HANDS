@@ -523,7 +523,27 @@ def build() -> dict[str, Any]:
         caption(c, "Zoom with two hands", "pinch both, pull apart = zoom in", "together = zoom out")
         return c
 
+    def other_slides() -> Canvas:
+        c = Canvas(0.16, (0.0, 0.0))
+        left = open_hand(False)
+        left.active |= {"index", "middle", "ring", "pinky"}
+        left.mirror, left.shift = True, (-1.15, 0.0)
+        right = open_hand()
+        right.shift = (0.75, 0.0)
+        for h in (left, right):
+            h.draw(c)
+        arrow(c, (-1.1, 2.35), (-0.2, 2.35))
+        arrow(c, (-1.1, 2.35), (-2.0, 2.35))
+        caption(
+            c,
+            "Slides with the other hand",
+            "other hand: swipe = previous / next",
+            "this hand keeps pointing",
+        )
+        return c
+
     pics.update(
+        hand_other_slides=other_slides,
         hand_slower=slower,
         hand_precision=precision,
         hand_magnifier=magnifier,

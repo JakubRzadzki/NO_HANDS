@@ -30,6 +30,17 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **Slides with the other hand** in the hand mouse: swipe the hand that does not move the
+  cursor left or right. The cursor hand only has the strict flick (it also points), which
+  missed careful swipes, wrist flicks and one-way swipes; the other hand's swipe catches
+  19–20 of 20 of each in simulation.
+- **"Next" and right away "previous" both count:** an opposite swipe was taken for the hand
+  coming back for 0.8 s after a swipe, now 0.45 s.
+- **No false slide changes from a slowly moving hand** with a weak camera: the hand's speed is
+  measured over 0.1 s instead of 0.06 s, so landmark noise no longer looks like a swipe.
+- **The preview window can be clicked safely:** no toolbar or context menu (a right click
+  could freeze the program), and the program never clicks on its own preview (on Windows a
+  press on its title bar could freeze it).
 - **Scroll with the whole hand:** turn the hand sideways, edge to the camera, and move it up or
   down. Scroll used to be index + middle together, and the precision V kept turning into it;
   two fingers are now always precision.
@@ -76,6 +87,7 @@ problem found while measuring.
 | Hand mouse | pinky folded | cursor at 50% |
 | Hand mouse | V or index + middle together (ring + pinky folded) | cursor at 25% |
 | Hand mouse | **other hand** shows a V | magnifier on, while this hand moves and clicks |
+| Hand mouse | **other hand** swipes left / right | previous / next slide, while this hand points |
 | Hand mouse | open hand flicked sideways and back | previous / next slide |
 | Hand mouse | fist | pause (clutch) |
 | Hand mouse | shaka held 0.6 s | mouse ↔ media mode |
@@ -160,7 +172,7 @@ released.
 <tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: the whole hand turned sideways, move up or down"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_zoom.png" width="210" alt="Zoom: horns, move up or down"></td><td align="center"><img src="docs/gestures/hand_clutch.png" width="210" alt="Pause: fist"></td><td align="center"><img src="docs/gestures/hand_flick.png" width="210" alt="Flick sideways and back: previous or next slide"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_slower.png" width="210" alt="Slower cursor: fold the pinky"></td><td align="center"><img src="docs/gestures/hand_precision.png" width="210" alt="Slowest cursor: V sign"></td><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Zoom with two hands: pinch both and pull apart"></td></tr>
-<tr><td align="center"><img src="docs/gestures/hand_magnifier.png" width="210" alt="Magnifier: the other hand shows a V, this hand moves and clicks"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_magnifier.png" width="210" alt="Magnifier: the other hand shows a V, this hand moves and clicks"></td><td align="center"><img src="docs/gestures/hand_other_slides.png" width="210" alt="Slides with the other hand: swipe left or right"></td></tr>
 </table>
 
 | Action | Gesture | Notes |
@@ -171,6 +183,7 @@ released.
 | Drag, select, draw | touch, keep touching and move | the drag starts once the hand has moved ~3 cm (0.35 palm lengths), from where the button went down; a still hand is always a click, however long the pinch |
 | Double click | two quick pinches | the cursor waits 0.35 s after a click, so both land on the same pixel |
 | Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
+| Previous / next slide | **swipe the other hand** (the one that does not move the cursor) left / right | Left / Right arrow, with the lenient `--slides` thresholds: a careful swipe counts too |
 | Previous / next slide | **flick** the open hand left / right **and straight back** | Left / Right arrow; the cursor ends where it was |
 | Scroll | **the whole hand turned sideways**, its edge to the camera (like a karate chop); move it up / down / sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone. A fist turned sideways is still a fist |
 | Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
@@ -205,6 +218,9 @@ released.
   cursor hand then waits 4 frames, so that pinching both hands at once never clicks first). A
   held button is never let go because of a second hand. Tracking two hands takes the tracker
   about twice as long (12 → 23 ms per frame here); `--no-two-hands` turns it off.
+- **For slides, use the other hand.** The cursor hand also points, so its slide gesture has to
+  be strict; the other hand does not point, so a plain swipe is enough. Holding the
+  magnifier's V or pinching for a zoom is never taken for a swipe.
 - **The flick has to come straight back.** That is what tells it from moving the cursor:
   nobody points far, fast, and straight back. It also needs to be longer and faster than a
   `--slides` swipe (about 14 cm, in a snap). `GestureConfig.flick_slides = False` turns it off.
@@ -264,8 +280,11 @@ after. These all work:
 - a flick of the wrist with the arm almost still.
 
 What does not change the slide:
-- **The way back.** An opposite stroke within 0.8 s of a swipe is the hand returning. Swipe
-  right, back, right, back: two slides forward.
+- **The way back.** An opposite stroke starting within 0.45 s of a swipe is the hand returning.
+  Swipe right, back, right, back: two slides forward. A deliberate "previous" after a "next"
+  counts once the hand has paused for a moment.
+- **Swipes shorter than ~9 cm (1 palm length).** In simulation no setting caught 7–8 cm
+  swipes without also turning ordinary talking gestures into slide changes.
 - **Small and slow movements:** bobbing while talking, up/down beats, slowly moving the hand.
 - **Raising the hand into view, lowering it out of view, or swiping off the frame edge.**
 - **A fist:** make one to move the hand without swiping.
@@ -293,7 +312,9 @@ The HUD shows the hand's path, the stroke as it happens and whether the hand cou
 5. **Camera:** at chest or face height, the hand 40–80 cm from it, light from the front.
 6. **On Windows, PowerPoint must not run "as administrator":** Windows blocks keys sent by a
    program without those rights.
-7. **During the talk:** move the open hand left / right for the slides, pinch to go forward,
+7. **Need the mouse too?** Run without `--slides`: the cursor hand points and clicks, and the
+   other hand swipes the slides.
+8. **During the talk:** move the open hand left / right for the slides, pinch to go forward,
    pinch both hands and pull apart to zoom. Make a fist to move the hand without changing
    anything, and `Ctrl+Alt+P` pauses everything. Gesture low or with the other hand: a wide,
    quick sideways movement is a swipe.
@@ -422,7 +443,7 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 | `--probe-camera` | measure which modes the camera really delivers, suggest the best, exit |
 | `--camera-test` | show only the camera picture in the preview window (no tracking, no input): the first thing to try when the preview shows nothing |
 | `--camera-settings` | Windows: open the camera driver's settings (exposure, low-light compensation) |
-| `--no-two-hands` | track one hand only: no two-hand zoom and no magnifier (both use the other hand), the tracker is about twice as fast |
+| `--no-two-hands` | track one hand only: no two-hand zoom, magnifier or other-hand slides (they all use the other hand), the tracker is about twice as fast |
 | `--no-hud` | no preview window (less CPU) |
 | `--screen WxH` | manual screen size when auto-detection fails |
 | `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | as the names say |
@@ -469,7 +490,9 @@ parameters are in `config.py`.
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
 | **Hand mouse:** clicks select text or drag things | `GestureConfig.drag_start` ↑ (e.g. 0.5 palm lengths) |
 | **Hand mouse:** a drag takes too much hand travel to start | `drag_start` ↓ (e.g. 0.25) |
-| **Hand mouse:** the flick does not change the slide | bring the hand straight back; `flick_distance` ↓, `flick_speed` ↓ |
+| **Hand mouse:** the flick does not change the slide | swipe with the other hand instead; or bring the hand straight back; `flick_distance` ↓, `flick_speed` ↓ |
+| **Slides:** a swipe is missed | swipe at least ~9 cm (a palm length), at an even pace, with an open hand, not to the frame edge; the HUD shows the stroke in palm lengths |
+| **Any mode:** the program freezes or quits after a click on the preview | update (both are fixed); if it still happens, run from a terminal and send the error text it prints |
 | **Hand mouse:** slides change while pointing or talking | `flick_distance` ↑, `flick_speed` ↑, or `flick_slides = False` |
 | **Hand mouse:** cursor stops when the thumb rests near a finger | `approach_freeze` ↓ (0 disables freezing) |
 | **Hand mouse:** scroll too fast / too slow | `scroll_gain`, `scroll_deadzone`, `scroll_max_rate` |
@@ -676,6 +699,12 @@ tested without a camera and a display:
   - **`--slides`** takes one-way strokes, also careful ones (18 cm taking 0.9 s): 20 of 20 for
     each kind of swipe in simulation, also with blur dropouts. Raising or lowering the hand,
     slow repositioning, bobbing, up/down beats and reaching to the face do nothing.
+  - **Speed over 0.1 s, not 0.06 s.** With a small hand at 15 FPS, landmark noise over two
+    frames looked like speed: slowly moving the hand "swiped" in 9 of 20 runs. Over three
+    frames it never does, and real swipes still count (careful ones 18–19 of 20).
+  - **Short swipes were measured and rejected:** every threshold that caught 7–8 cm swipes
+    also caught talking gestures of that size in up to 16 of 20 runs.
+  - **The other hand in the hand mouse** uses the `--slides` detector as it is.
   - **Hand mouse:** the same detector, but the stroke has to be longer and faster and the hand
     has to come straight back. In simulation fast pointing never changed the slide, whether
     the hand stayed there or came back slowly; neither did a wide talking sweep.
