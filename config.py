@@ -240,7 +240,10 @@ class SlidesConfig:
     axis_ratio: float = 1.5  # sideways must be this much longer than up/down (~34 deg)
     max_stroke: float = 1.0  # s: longer movements are repositioning, not swipes
     min_fingers: int = 2  # fingers not curled when the stroke starts; a moving fist never swipes
-    return_window: float = 0.8  # s: an opposite stroke this soon after a swipe is the way back
+    # s: an opposite stroke starting this soon after a swipe is the hand coming back. The way back
+    # starts within ~0.3 s; 0.8 (the first value) also swallowed a deliberate "previous" right
+    # after a "next" (0 of 20 in simulation, 18 of 20 now).
+    return_window: float = 0.45
     arm_time: float = 0.3  # s the hand must be in view before strokes count (raising it)
     # Hand mouse only: the swipe counts once the hand is this much of the way back, this soon.
     return_fraction: float = 0.5

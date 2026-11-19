@@ -33,7 +33,10 @@ import numpy as np
 from config import SlidesConfig
 from src.smoother import FloatArray
 
-SPEED_LAG = 0.06  # s: speed = displacement over this long (two frames at 30 FPS)
+# s: speed = displacement over this long (three frames at 30 FPS). Over two frames (0.06 s)
+# landmark noise alone looked like speed: with a small hand at 15 FPS, slowly moving the hand
+# "swiped" in 9 of 20 simulated runs; over 0.1 s in none, and real swipes still count.
+SPEED_LAG = 0.1
 START_LAG = 0.1  # s: a stroke starts this long before its speed was noticed
 HISTORY = 1.5  # s of positions kept (speed, the HUD trail)
 END_FRACTION = 0.35  # a stroke ends when the speed falls below this fraction of its peak ...
