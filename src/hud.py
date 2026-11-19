@@ -270,6 +270,7 @@ class Hud:
             lines.append(("both hands pinched, pull apart / together: zoom", 0.4, GRAY))
             lines.append(("hand turned sideways, move up / down: scroll", 0.4, GRAY))
             lines.append(("other hand V: magnifier (this hand keeps moving)", 0.4, GRAY))
+            lines.append(("other hand swipe left / right: previous / next slide", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)

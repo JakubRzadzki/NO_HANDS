@@ -8,7 +8,7 @@ from typing import Any
 
 from config import AppConfig
 from src.gesture_engine import LeftState, Mode
-from src.os_controller import Action, Magnify, MoveTo, Press, Release, Zoom
+from src.os_controller import Action, KeyTap, Magnify, MoveTo, Press, Release, Zoom
 from src.slide_gestures import SlideGestures
 from tests.handgen import CENTER, OPEN, VICTORY, Driver, make_engine, pinch
 
@@ -234,3 +234,55 @@ def test_a_resting_second_hand_does_not_block_swipes() -> None:
     swipe = d.sweep(OPEN, CENTER, (0.7, 0.55), 0.3, second=other)
     swipe += d.hold(OPEN, 0.5, center=(0.7, 0.55), second=other)
     assert [a.key for a in swipe if hasattr(a, "key")] == ["right"]
+
+
+# -- slides with the other hand ------------------------------------------------------------------
+def other_swipe(d: Driver, x0: float, x1: float, seconds: float, pose: Any = None) -> list[Action]:
+    """The other hand moves from x0 to x1 (frame widths) the way people move, speeding up and
+    slowing down (minimum jerk); the cursor hand holds still."""
+    n = max(1, round(seconds / d.dt))
+    actions: list[Action] = []
+    for i in range(1, n + 1):
+        u = i / n
+        k = 10 * u**3 - 15 * u**4 + 6 * u**5
+        actions += d.step(OPEN, left_hand(x0 + (x1 - x0) * k, pose)).actions
+    return actions
+
+
+def keys(actions: list[Action]) -> list[str]:
+    return [a.key for a in actions if isinstance(a, KeyTap)]
+
+
+def test_the_other_hand_swipes_the_slides_while_this_hand_points() -> None:
+    """The cursor hand only has the strict flick (it also points). The other hand does not
+    point, so its swipes use the lenient --slides thresholds."""
+    d = settled()
+    d.hold(OPEN, 0.5, second=left_hand(0.15))  # the other hand comes up and rests
+    actions = other_swipe(d, 0.15, 0.35, 0.3) + d.hold(OPEN, 0.5, second=left_hand(0.35))
+    assert keys(actions) == ["right"]
+    actions = d.hold(OPEN, 0.6, second=left_hand(0.35))
+    actions += other_swipe(d, 0.35, 0.15, 0.3) + d.hold(OPEN, 0.5, second=left_hand(0.15))
+    assert keys(actions) == ["left"]
+    assert of(actions, Press) == []  # the cursor hand did nothing
+
+
+def test_a_careful_swipe_of_the_other_hand_counts() -> None:
+    d = settled()
+    d.hold(OPEN, 0.5, second=left_hand(0.12))
+    actions = other_swipe(d, 0.12, 0.36, 0.9) + d.hold(OPEN, 0.5, second=left_hand(0.36))
+    assert keys(actions) == ["right"]  # 2 palm lengths taking 0.9 s
+
+
+def test_the_other_hand_coming_into_view_or_holding_the_magnifier_does_not_swipe() -> None:
+    d = settled()
+    raising = other_swipe(d, 0.05, 0.3, 0.3)  # appears already moving
+    assert keys(raising + d.hold(OPEN, 0.5, second=left_hand(0.3))) == []
+    d.hold(OPEN, 0.3, second=left_hand(0.3, VICTORY))
+    moving_v = other_swipe(d, 0.3, 0.1, 0.3, VICTORY)  # the magnifier's V, moved
+    assert keys(moving_v) == []
+
+
+def test_other_hand_slides_can_be_switched_off() -> None:
+    d = settled(other_hand_slides=False)
+    d.hold(OPEN, 0.5, second=left_hand(0.15))
+    assert keys(other_swipe(d, 0.15, 0.35, 0.3) + d.hold(OPEN, 0.5)) == []

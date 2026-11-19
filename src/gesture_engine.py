@@ -84,6 +84,9 @@ class Finger(Enum):
         return self.value[1]
 
 
+# s the other hand may be lost (motion blur) before its swipe is forgotten.
+OTHER_HAND_GAP = 0.15
+
 # Relaxed horns: middle and ring this much (extension ratio) below index and pinky.
 HORNS_MARGIN = 0.15
 
@@ -206,6 +209,11 @@ class GestureEngine:
         self._swipes = (
             SwipeDetector(self._slides, require_return=True) if cfg.flick_slides else None
         )
+        # The other hand's swipes change slides, with the lenient --slides thresholds.
+        self._other_swipes = (
+            SwipeDetector(slides or SlidesConfig()) if cfg.other_hand_slides else None
+        )
+        self._other_seen: float | None = None  # when the other hand was last seen
         self._media_active = False  # survives tracking loss: lowering the hand is normal here
         self._two = TwoHandZoom(cfg) if cfg.two_hand_zoom else None
         self._speed_level = 0  # index into cfg.precision_speeds
@@ -325,12 +333,16 @@ class GestureEngine:
             self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
         actions: list[Action] = []
-        # The other hand's V = the magnifier (it changes nothing about this hand).
-        other_v = second is not None and is_v_sign(
-            HandFeatures.from_observation(second, depth_weight=self.cfg.pinch_depth_weight),
-            self.cfg,
+        # The other hand: a V = the magnifier, a swipe = previous / next slide. Neither changes
+        # anything about this hand.
+        other = (
+            None
+            if second is None
+            else HandFeatures.from_observation(second, depth_weight=self.cfg.pinch_depth_weight)
         )
+        other_v = other is not None and is_v_sign(other, self.cfg)
         self._lens.update(0.0 if other_v else 1.0)
+        actions += self._other_hand_swipe(second, other, other_v, t)
         if self._two is not None and not self._media_active:
             # Both hands pinch at about the same time for a two-hand zoom: with a second hand in
             # view the cursor hand's pinch waits a few frames longer, so it cannot click first.
@@ -436,6 +448,37 @@ class GestureEngine:
             return []
         self._magnify = want
         return [Magnify(want)]
+
+    def _other_hand_swipe(
+        self, second: HandObservation | None, f: HandFeatures | None, v_sign: bool, t: float
+    ) -> list[Action]:
+        """The other hand swipes the slides: it does not point, so the --slides thresholds fit."""
+        swipes = self._other_swipes
+        if swipes is None:
+            return []
+        if second is None or f is None:
+            if self._other_seen is not None and t - self._other_seen > OTHER_HAND_GAP:
+                swipes.reset()  # gone, not just a blurred frame or two
+                self._other_seen = None
+            return []
+        self._other_seen = t
+        busy = v_sign or self._lens.active or (self._two is not None and self._two.pinched[1])
+        if busy or self._media_active:
+            swipes.cancel()  # holding the magnifier or zooming is not swiping
+            return []
+        slides = swipes.cfg
+        not_curled = sum(ratio > self.cfg.finger_curled_below for ratio in f.extension.values())
+        direction = swipes.update(
+            t,
+            second.px[:, :2].mean(axis=0),
+            second.palm_scale,
+            not_curled >= slides.min_fingers,
+            float(second.frame_size[0]),
+        )
+        if direction is None:
+            return []
+        self._set_flash("RIGHT >>" if direction == "right" else "<< LEFT", t, 0.6)
+        return [KeyTap(direction)]
 
     # -- two hands ---------------------------------------------------------------------------
     def _two_hands(

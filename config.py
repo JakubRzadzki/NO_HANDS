@@ -159,6 +159,12 @@ class GestureConfig:
     magnifier: bool = True
     magnifier_confirm_frames: int = 4  # the V must be seen this many frames to turn it on
     magnifier_release_frames: int = 8  # ... and be gone this many to turn it off
+    # Slides with the other hand: an open-hand swipe of the hand that does not move the cursor
+    # presses Left / Right, with the --slides thresholds (SlidesConfig). The cursor hand only
+    # has the strict flick (sideways and straight back), because it also points; in simulation
+    # the flick missed every careful swipe, wrist flick and one-way swipe, the other hand's
+    # swipe caught 19-20 of 20 of each.
+    other_hand_slides: bool = True
 
     # Zoom with two hands: pinch thumb + index on both hands and pull them apart (zoom in) or
     # together (zoom out), like two fingers on a touchscreen. While the other hand pinches, the
