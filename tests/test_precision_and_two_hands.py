@@ -1,4 +1,4 @@
-"""Precision (fold fingers to slow the cursor), the magnifier, the relaxed horns and the zoom with
+"""Precision (fold fingers to slow the cursor), the relaxed horns and the zoom with
 two hands, on synthetic hands."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from typing import Any
 
 from config import AppConfig
 from src.gesture_engine import LeftState, Mode
-from src.os_controller import Action, KeyTap, Magnify, MoveTo, Press, Release, Zoom
+from src.os_controller import Action, KeyTap, MoveTo, Press, Release, Zoom
 from src.slide_gestures import SlideGestures
 from tests.handgen import CENTER, OPEN, VICTORY, Driver, make_engine, pinch
 
@@ -52,7 +52,7 @@ def test_folding_fingers_slows_the_cursor_down() -> None:
 def test_back_to_full_speed_the_cursor_does_not_jump() -> None:
     """After slow movement the cursor is off the spot the hand points at. That offset fades
     while the hand moves; it never jumps the cursor."""
-    d = settled(magnifier=False)
+    d = settled()
     d.hold(VICTORY, 0.3)
     d.sweep(VICTORY, CENTER, (0.6, 0.55), 0.5)
     actions = d.hold(OPEN, 0.5, center=(0.6, 0.55)) + d.sweep(OPEN, (0.6, 0.55), CENTER, 0.6)
@@ -65,51 +65,10 @@ def test_back_to_full_speed_the_cursor_does_not_jump() -> None:
     assert abs(float(d.engine.mapper._offset[0])) < 1.0  # caught up with the hand again
 
 
-def other_v(x: float = 0.25) -> dict[str, Any]:
-    """The other hand (left of the cursor hand) showing a V."""
-    return {"center": (x, 0.55), **VICTORY}
-
-
-def test_the_other_hands_v_turns_the_magnifier_on_and_this_hand_works_as_usual() -> None:
-    """Asked for: the magnifier with the other hand, while this hand keeps moving and clicking
-    at full speed."""
+def test_a_v_slows_the_cursor_to_a_quarter() -> None:
     d = settled()
-    on = d.hold(OPEN, 0.2, second=other_v())
-    assert of(on, Magnify) == [Magnify(True)] and d.outputs[-1].magnifier
-    assert d.outputs[-1].speed == 1.0  # the cursor hand is not slowed down
-    moves = d.sweep(OPEN, CENTER, (0.6, 0.55), 0.3, second=other_v())
-    assert len(of(moves, MoveTo)) > 5
-    click = d.hold(pinch("index"), 0.1, center=(0.6, 0.55), second=other_v())
-    click += d.hold(OPEN, 0.3, center=(0.6, 0.55), second=other_v())
-    assert of(click, Press) == [Press("left")] and of(click, Release) == [Release("left")]
-    assert of(moves + click, Magnify) == []  # on all along
-    off = d.hold(OPEN, 0.3, center=(0.6, 0.55), second=left_hand(0.25))  # the V opens
-    assert of(off, Magnify) == [Magnify(False)] and not d.outputs[-1].magnifier
-
-
-def test_the_magnifier_goes_off_when_the_other_hand_leaves_and_survives_a_lost_frame() -> None:
-    d = settled()
-    d.hold(OPEN, 0.2, second=other_v())
-    assert of(d.hold(OPEN, 2 / 60), Magnify) == []  # two frames without it: still on
-    assert d.outputs[-1].magnifier
-    assert of(d.hold(OPEN, 0.3), Magnify) == [Magnify(False)]
-
-
-def test_this_hands_v_slows_the_cursor_but_does_not_magnify() -> None:
-    d = settled()
-    actions = d.hold(VICTORY, 0.3)
-    assert d.outputs[-1].speed == 0.25 and of(actions, Magnify) == []
-
-
-def test_the_magnifier_goes_off_when_the_hands_are_lost() -> None:
-    d = settled()
-    d.hold(OPEN, 0.2, second=other_v())
-    assert of(d.hold(None, 1.0), Magnify) == [Magnify(False)]
-
-
-def test_the_magnifier_can_be_switched_off() -> None:
-    d = settled(magnifier=False)
-    assert of(d.hold(OPEN, 0.5, second=other_v()), Magnify) == []
+    d.hold(VICTORY, 0.3)
+    assert d.outputs[-1].speed == 0.25
 
 
 def test_clicking_in_precision_mode_keeps_the_speed() -> None:
@@ -273,13 +232,10 @@ def test_a_careful_swipe_of_the_other_hand_counts() -> None:
     assert keys(actions) == ["right"]  # 2 palm lengths taking 0.9 s
 
 
-def test_the_other_hand_coming_into_view_or_holding_the_magnifier_does_not_swipe() -> None:
+def test_the_other_hand_coming_into_view_does_not_swipe() -> None:
     d = settled(other_hand_slides=True)
     raising = other_swipe(d, 0.05, 0.3, 0.3)  # appears already moving
     assert keys(raising + d.hold(OPEN, 0.5, second=left_hand(0.3))) == []
-    d.hold(OPEN, 0.3, second=left_hand(0.3, VICTORY))
-    moving_v = other_swipe(d, 0.3, 0.1, 0.3, VICTORY)  # the magnifier's V, moved
-    assert keys(moving_v) == []
 
 
 def test_other_hand_slides_can_be_switched_off() -> None:

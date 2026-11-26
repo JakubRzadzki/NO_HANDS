@@ -43,7 +43,7 @@ from src.hand_tracker import (
     HandObservation,
 )
 from src.media_gestures import MediaGestures
-from src.os_controller import Action, Click, KeyTap, Magnify, Press, Release, Scroll, Zoom
+from src.os_controller import Action, Click, KeyTap, Press, Release, Scroll, Zoom
 from src.pinch import HysteresisLatch as HysteresisLatch
 from src.pinch import pinch_distance as pinch_distance
 from src.pointer import CursorMapper
@@ -139,17 +139,6 @@ class HandFeatures:
         )
 
 
-def is_v_sign(f: HandFeatures, cfg: GestureConfig) -> bool:
-    """Index and middle straight, ring and pinky folded (the thumb does not matter)."""
-    e, straight, folded = f.extension, cfg.finger_extended_above, cfg.finger_curled_below
-    return (
-        e[Finger.INDEX] > straight
-        and e[Finger.MIDDLE] > straight
-        and e[Finger.RING] < folded
-        and e[Finger.PINKY] < folded
-    )
-
-
 def is_pinch_shape(f: HandFeatures, finger: Finger, cfg: GestureConfig) -> bool:
     """Is the hand shaped like a pinch with this finger, apart from the distance?
 
@@ -182,7 +171,6 @@ class EngineOutput:
     trail: list[tuple[float, float]] = field(default_factory=list)  # --slides: wrist path, px
     stroke: tuple[float, float] | None = None  # --slides: stroke so far, palm lengths
     speed: float = 1.0  # cursor speed: < 1 = precision (fingers folded)
-    magnifier: bool = False  # the system magnifier is on
     two_hands: tuple[tuple[float, float], tuple[float, float]] | None = None  # the two pinches
     pinched_hands: tuple[bool, bool] = (False, False)  # two-hand mode: which hand pinches
 
@@ -223,16 +211,6 @@ class GestureEngine:
         self._speed_level = 0  # index into cfg.precision_speeds
         self._speed_candidate = 0
         self._speed_frames = 0
-        self._magnify = False  # what we last asked of the system magnifier
-        # The other hand's V, debounced: on after magnifier_confirm_frames, off after
-        # magnifier_release_frames without it (a lost frame must not flash the magnifier).
-        # Fed 0 (V seen) or 1 (not seen).
-        self._lens = HysteresisLatch(
-            0.5,
-            0.5 + 1e-9,
-            confirm_frames=cfg.magnifier_confirm_frames,
-            release_frames=cfg.magnifier_release_frames,
-        )
         self._switch_since: float | None = None
         self._switch_done = False
         self._finger = {
@@ -292,10 +270,6 @@ class GestureEngine:
     def reset(self) -> list[Action]:
         """Forget all gesture state. Returns the actions needed to release anything held."""
         actions: list[Action] = [] if self._left is LeftState.IDLE else [Release("left")]
-        if self._magnify:
-            actions.append(Magnify(False))
-            self._magnify = False
-        self._lens.reset()
         for gun in self._guns:
             gun.reset()
         self._speed_level = self._speed_candidate = self._speed_frames = 0
@@ -339,25 +313,21 @@ class GestureEngine:
             self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
         actions: list[Action] = []
-        # The other hand: a V = the magnifier, a swipe = previous / next slide. Neither changes
-        # anything about this hand.
+        # The other hand: a finger gun or a swipe changes the slide. Neither changes anything
+        # about this hand.
         other = (
             None
             if second is None
             else HandFeatures.from_observation(second, depth_weight=self.cfg.pinch_depth_weight)
         )
-        other_v = other is not None and is_v_sign(other, self.cfg)
-        self._lens.update(0.0 if other_v else 1.0)
         aim = self._aim(obs, features)
         other_aim = self._aim(second, other)
         actions += self._fire_guns(aim, other_aim, t)
-        actions += self._other_hand_swipe(second, other, other_v or other_aim is not None, t)
+        actions += self._other_hand_swipe(second, other, other_aim is not None, t)
         if self._two is not None and not self._media_active:
             # Both hands pinch at about the same time for a two-hand zoom: with a second hand in
             # view the cursor hand's pinch waits a few frames longer, so it cannot click first.
-            # Not while the other hand holds the magnifier's V: that hand is not pinching.
-            zooming_maybe = second is not None and not self._lens.active
-            delay = self.cfg.two_hand_click_delay_frames if zooming_maybe else 0
+            delay = self.cfg.two_hand_click_delay_frames if second is not None else 0
             for latch in self._pinch.values():
                 latch.confirm_frames = self.cfg.pinch_confirm_frames + delay
             # Only a pinching second hand counts. A held button keeps the hand mouse: a second
@@ -408,7 +378,6 @@ class GestureEngine:
                 actions += media_actions
                 if event is not None:
                     self._set_flash(event, t, 0.5)
-        actions += self._magnifier()
 
         return EngineOutput(
             mode=self._mode,
@@ -426,10 +395,9 @@ class GestureEngine:
             knob_offset=self._media.knob_offset if self._mode is Mode.MEDIA else None,
             volume_rate=self._media.volume_rate if self._mode is Mode.MEDIA else 0.0,
             speed=self.speed,
-            magnifier=self._magnify,
         )
 
-    # -- precision and magnifier -------------------------------------------------------------
+    # -- precision ---------------------------------------------------------------------------
     @property
     def speed(self) -> float:
         """Cursor speed factor: 1 = full, smaller = precision (fingers folded)."""
@@ -449,14 +417,6 @@ class GestureEngine:
             self._speed_candidate, self._speed_frames = level, 1
         if self._speed_frames >= self.cfg.precision_confirm_frames:
             self._speed_level, self._speed_frames = level, 0
-
-    def _magnifier(self) -> list[Action]:
-        """The system magnifier is on while the other hand shows a V."""
-        want = self.cfg.magnifier and self._lens.active
-        if want == self._magnify:
-            return []
-        self._magnify = want
-        return [Magnify(want)]
 
     def _aim(self, obs: HandObservation | None, f: HandFeatures | None) -> str | None:
         """Where a finger gun points, if the hand is one (and guns are on)."""
@@ -478,7 +438,7 @@ class GestureEngine:
         return actions
 
     def _other_hand_swipe(
-        self, second: HandObservation | None, f: HandFeatures | None, v_sign: bool, t: float
+        self, second: HandObservation | None, f: HandFeatures | None, gun: bool, t: float
     ) -> list[Action]:
         """The other hand swipes the slides: it does not point, so the --slides thresholds fit."""
         swipes = self._other_swipes
@@ -490,9 +450,9 @@ class GestureEngine:
                 self._other_seen = None
             return []
         self._other_seen = t
-        busy = v_sign or self._lens.active or (self._two is not None and self._two.pinched[1])
+        busy = gun or (self._two is not None and self._two.pinched[1])
         if busy or self._media_active:
-            swipes.cancel()  # holding the magnifier or zooming is not swiping
+            swipes.cancel()  # holding a gun or zooming is not swiping
             return []
         slides = swipes.cfg
         not_curled = sum(ratio > self.cfg.finger_curled_below for ratio in f.extension.values())
@@ -520,7 +480,6 @@ class GestureEngine:
             previous, self._mode = self._mode, Mode.TWO_HANDS
             self._candidate, self._candidate_frames = None, 0
             actions += self._on_mode_change(previous)
-        actions += self._magnifier()
         if self._swipes is not None:
             self._swipes.reset()
         self._cursor_frozen = True

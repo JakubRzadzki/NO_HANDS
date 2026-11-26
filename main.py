@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 import cv2
@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--no-two-hands",
         action="store_true",
-        help="track one hand only: no two-hand zoom, magnifier or other-hand slides; ~2x as fast",
+        help="track one hand only: no two-hand zoom, no other-hand gun or swipe; ~2x as fast",
     )
     p.add_argument(
         "--no-hud",
@@ -162,8 +162,8 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     cfg.output.screen_size = args.screen
     cfg.hud.enabled = not args.no_hud
     if args.no_two_hands:
+        cfg.tracker.num_hands = 1  # no other hand: no two-hand zoom, no gun from the other hand
         cfg.gesture.two_hand_zoom = False
-        cfg.gesture.magnifier = False  # it is the other hand's gesture
         cfg.gesture.other_hand_slides = False
     cfg.hotkeys.enabled = not args.no_hotkeys
     cfg.validate()
@@ -432,14 +432,7 @@ def run(cfg: AppConfig) -> int:
         # release_all is registered after the tracker, so it runs first on *any* exit (normal,
         # exception, Ctrl+C): a mouse button or Ctrl key must never stay held after we are gone.
         if cfg.input_mode in ("hands", "slides"):
-            # Two hands are tracked only for the other hand's gestures (zoom, magnifier,
-            # slides): MediaPipe then runs its palm detector on every frame with one hand in
-            # view, which costs some speed.
-            tracker_cfg = cfg.tracker
-            g = cfg.gesture
-            if g.two_hand_zoom or g.magnifier or g.other_hand_slides:
-                tracker_cfg = replace(tracker_cfg, num_hands=max(2, tracker_cfg.num_hands))
-            hands = stack.enter_context(HandTracker(tracker_cfg))
+            hands = stack.enter_context(HandTracker(cfg.tracker))
             stack.callback(controller.release_all)
             return _hands_loop(session, hands)
         face = stack.enter_context(FaceTracker(cfg.face, cfg.camera.mirror))

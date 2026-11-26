@@ -50,7 +50,10 @@ class CameraConfig:
 class TrackerConfig:
     model_path: str = "models/hand_landmarker.task"
     model_url: str = MODEL_URL
-    num_hands: int = 1
+    # The other hand zooms (pinch both) and fires the finger gun. With one hand in view
+    # MediaPipe then runs its palm detector on every frame, which costs speed: --no-two-hands
+    # sets 1.
+    num_hands: int = 2
     min_detection_confidence: float = 0.6
     min_presence_confidence: float = 0.5
     # Higher values make MediaPipe re-run the (slower, jumpier) palm detector more often.
@@ -150,15 +153,6 @@ class GestureConfig:
     # full speed the gap closes by this fraction of the hand's travel (the cursor moves up to
     # 1.5x / 0.5x as fast as the hand until it is back), so the cursor never jumps.
     precision_catch_up: float = 0.5
-    # Magnifier: the other hand - the one that does not move the cursor, the left one for most
-    # people - shows a V (index + middle out, ring + pinky folded), and the system's screen
-    # magnifier is on for as long as it does (Windows: Magnifier, Win + Plus; macOS: Zoom,
-    # Option + Cmd + 8, must be enabled in Accessibility; Linux GNOME: Super + Alt + 8). The
-    # cursor hand meanwhile moves and clicks as usual, at full speed. (It used to be the V of
-    # the cursor hand itself, which then also slowed the cursor to 25%.)
-    magnifier: bool = True
-    magnifier_confirm_frames: int = 4  # the V must be seen this many frames to turn it on
-    magnifier_release_frames: int = 8  # ... and be gone this many to turn it off
     # Slides with the other hand: an open-hand swipe of the hand that does not move the cursor
     # presses Left / Right, with the --slides thresholds (SlidesConfig). The cursor hand only
     # has the strict flick (sideways and straight back), because it also points; in simulation
@@ -396,10 +390,6 @@ class AppConfig:
                 "gun_confirm_frames / gun_release_frames must be >= 1",
             ),
             (0 < g.gun_max_tilt <= 90, "gun_max_tilt must be in (0, 90]"),
-            (
-                g.magnifier_confirm_frames >= 1 and g.magnifier_release_frames >= 1,
-                "magnifier_confirm_frames / magnifier_release_frames must be >= 1",
-            ),
             (
                 len(g.precision_speeds) == 3 and all(0 < v <= 1 for v in g.precision_speeds),
                 "precision_speeds: three values in (0, 1]",
