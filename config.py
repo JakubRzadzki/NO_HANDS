@@ -164,7 +164,17 @@ class GestureConfig:
     # has the strict flick (sideways and straight back), because it also points; in simulation
     # the flick missed every careful swipe, wrist flick and one-way swipe, the other hand's
     # swipe caught 19-20 of 20 of each.
-    other_hand_slides: bool = True
+    other_hand_slides: bool = False  # replaced by the gun; True = on as well
+    # Slides by finger gun (src/gun.py): index out, thumb up, other fingers folded, either hand.
+    # Pointing right = next slide, left = previous. Measured: a gun's thumb stands ~75 deg from
+    # the index, ~1 palm length from its knuckle; pointing at something keeps the thumb along
+    # the hand (25 deg, 0.2 on a real photo).
+    gun_slides: bool = True
+    gun_confirm_frames: int = 6  # held this many frames (~0.2 s) before it fires, once
+    gun_release_frames: int = 4  # gone this many frames before the next gun can fire
+    gun_max_tilt: float = 40.0  # deg the barrel may point up / down from level
+    gun_thumb_angle: float = 50.0  # deg at least between the thumb and the index
+    gun_thumb_out: float = 0.6  # palm lengths at least from the thumb tip to the index knuckle
 
     # Zoom with two hands: pinch thumb + index on both hands and pull them apart (zoom in) or
     # together (zoom out), like two fingers on a touchscreen. While the other hand pinches, the
@@ -204,7 +214,7 @@ class GestureConfig:
     # (previous / next slide). The way back is what tells it from moving the cursor. It has to
     # be longer and faster than a --slides swipe, because here the same hand also points and
     # gestures. False = swipes only in --slides.
-    flick_slides: bool = True
+    flick_slides: bool = False  # replaced by the gun (more reliable); True = on as well
     flick_distance: float = 1.5  # palm lengths sideways (~14 cm)
     flick_speed: float = 6.0  # palm lengths per second at the peak
 
@@ -381,6 +391,11 @@ class AppConfig:
             (g.pinch_release_frames >= 1, "pinch_release_frames must be >= 1"),
             (g.flick_distance > 0 and g.flick_speed > 0, "flick distance / speed must be > 0"),
             (g.drag_start > 0, "drag_start must be > 0"),
+            (
+                g.gun_confirm_frames >= 1 and g.gun_release_frames >= 1,
+                "gun_confirm_frames / gun_release_frames must be >= 1",
+            ),
+            (0 < g.gun_max_tilt <= 90, "gun_max_tilt must be in (0, 90]"),
             (
                 g.magnifier_confirm_frames >= 1 and g.magnifier_release_frames >= 1,
                 "magnifier_confirm_frames / magnifier_release_frames must be >= 1",

@@ -82,6 +82,8 @@ def state_color(out: EngineOutput, paused: bool) -> Color:
         return GREEN if out.label in SLIDE_EVENTS else CYAN
     if out.mode is Mode.SWITCH:
         return WHITE
+    if out.mode is Mode.GUN:
+        return GREEN
     if out.mode is Mode.NO_HAND:
         return GRAY
     if out.left_state is not LeftState.IDLE or out.label in CLICK_LABELS | SLIDE_EVENTS:
@@ -263,14 +265,11 @@ class Hud:
         if not out.media_active:
             lines.append(("thumb + index: button down while they touch (click / drag)", 0.4, GRAY))
             lines.append(("thumb + middle: right click   2 quick pinches: double click", 0.4, GRAY))
-            lines.append(
-                ("flick the open hand sideways and back: previous / next slide", 0.4, GRAY)
-            )
+            lines.append(("finger gun pointing right / left: next / previous slide", 0.4, GRAY))
             lines.append(("fold the pinky: slower   V (index + middle): slowest", 0.4, GRAY))
             lines.append(("both hands pinched, pull apart / together: zoom", 0.4, GRAY))
             lines.append(("hand turned sideways, move up / down: scroll", 0.4, GRAY))
             lines.append(("other hand V: magnifier (this hand keeps moving)", 0.4, GRAY))
-            lines.append(("other hand swipe left / right: previous / next slide", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)
@@ -296,7 +295,8 @@ class Hud:
             is_open = sum(out.extended.values()) >= cfg.min_fingers
             state = "open hand" if is_open else "not open: strokes are ignored"
             lines.append((f"fingers {fingers}  {state}", 0.45, WHITE if is_open else GRAY))
-        lines.append(("move the open hand left / right = previous / next slide", 0.4, GRAY))
+        lines.append(("finger gun pointing right / left = next / previous slide", 0.4, GRAY))
+        lines.append(("or move the open hand left / right", 0.4, GRAY))
         lines.append(("quick pinch thumb + index = next slide", 0.4, GRAY))
         lines.append(("pinch and move up / down = zoom in / out", 0.4, GRAY))
         lines.append(("or: both hands pinched, pull apart / together", 0.4, GRAY))

@@ -310,7 +310,7 @@ def keys(actions: list[Action]) -> list[str]:
 
 
 def test_flick_and_back_changes_the_slide_and_leaves_the_cursor_where_it_was() -> None:
-    d = settled()
+    d = settled(flick_slides=True)
     before = d.outputs[-1]
     actions = flick(d, CENTER[0] + 0.25)  # 2.1 palm lengths to the right and back
     assert keys(actions) == ["right"]
@@ -322,7 +322,7 @@ def test_flick_and_back_changes_the_slide_and_leaves_the_cursor_where_it_was() -
 
 
 def test_moving_the_cursor_fast_without_coming_back_is_not_a_flick() -> None:
-    d = settled()
+    d = settled(flick_slides=True)
     there = (CENTER[0] + 0.25, CENTER[1])
     one_way = d.sweep(OPEN, CENTER, there, 0.15) + d.hold(OPEN, 1.0, center=there)
     assert keys(one_way) == []
@@ -331,14 +331,14 @@ def test_moving_the_cursor_fast_without_coming_back_is_not_a_flick() -> None:
 
 
 def test_small_or_slow_out_and_back_moves_are_not_flicks() -> None:
-    d = settled()
+    d = settled(flick_slides=True)
     assert keys(flick(d, CENTER[0] + 0.10)) == []  # 0.85 palm lengths: too short
     d.hold(OPEN, 1.0)
     assert keys(flick(d, CENTER[0] + 0.25, out=0.8, back=0.8)) == []  # too slow
 
 
 def test_dragging_back_and_forth_is_not_a_flick() -> None:
-    d = settled()
+    d = settled(flick_slides=True)
     d.hold(pinch("index"), 0.4)
     there = (CENTER[0] + 0.25, CENTER[1])
     shake = d.sweep(pinch("index"), CENTER, there, 0.15) + d.sweep(

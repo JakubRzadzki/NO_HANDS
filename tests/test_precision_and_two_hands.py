@@ -256,7 +256,7 @@ def keys(actions: list[Action]) -> list[str]:
 def test_the_other_hand_swipes_the_slides_while_this_hand_points() -> None:
     """The cursor hand only has the strict flick (it also points). The other hand does not
     point, so its swipes use the lenient --slides thresholds."""
-    d = settled()
+    d = settled(other_hand_slides=True)
     d.hold(OPEN, 0.5, second=left_hand(0.15))  # the other hand comes up and rests
     actions = other_swipe(d, 0.15, 0.35, 0.3) + d.hold(OPEN, 0.5, second=left_hand(0.35))
     assert keys(actions) == ["right"]
@@ -267,14 +267,14 @@ def test_the_other_hand_swipes_the_slides_while_this_hand_points() -> None:
 
 
 def test_a_careful_swipe_of_the_other_hand_counts() -> None:
-    d = settled()
+    d = settled(other_hand_slides=True)
     d.hold(OPEN, 0.5, second=left_hand(0.12))
     actions = other_swipe(d, 0.12, 0.36, 0.9) + d.hold(OPEN, 0.5, second=left_hand(0.36))
     assert keys(actions) == ["right"]  # 2 palm lengths taking 0.9 s
 
 
 def test_the_other_hand_coming_into_view_or_holding_the_magnifier_does_not_swipe() -> None:
-    d = settled()
+    d = settled(other_hand_slides=True)
     raising = other_swipe(d, 0.05, 0.3, 0.3)  # appears already moving
     assert keys(raising + d.hold(OPEN, 0.5, second=left_hand(0.3))) == []
     d.hold(OPEN, 0.3, second=left_hand(0.3, VICTORY))

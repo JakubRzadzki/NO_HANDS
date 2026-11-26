@@ -24,6 +24,7 @@ from enum import Enum
 import numpy as np
 
 from config import GestureConfig, MediaConfig, SlidesConfig
+from src.gun import GunTrigger, gun_direction
 from src.hand_tracker import (
     INDEX_MCP,
     INDEX_PIP,
@@ -61,6 +62,7 @@ class Mode(str, Enum):
     MEDIA = "MEDIA"  # music control instead of the mouse
     SLIDES = "SLIDES"  # --slides: hand strokes change slides and zoom (src/slide_gestures.py)
     TWO_HANDS = "TWO HANDS"  # both hands in view: pinch both and pull apart / together = zoom
+    GUN = "GUN"  # finger gun: the barrel's direction changes the slide (src/gun.py)
 
 
 class LeftState(str, Enum):
@@ -214,6 +216,8 @@ class GestureEngine:
             SwipeDetector(slides or SlidesConfig()) if cfg.other_hand_slides else None
         )
         self._other_seen: float | None = None  # when the other hand was last seen
+        # Finger guns, one trigger per hand: pointing right = next slide, left = previous.
+        self._guns = (GunTrigger(cfg), GunTrigger(cfg))
         self._media_active = False  # survives tracking loss: lowering the hand is normal here
         self._two = TwoHandZoom(cfg) if cfg.two_hand_zoom else None
         self._speed_level = 0  # index into cfg.precision_speeds
@@ -292,6 +296,8 @@ class GestureEngine:
             actions.append(Magnify(False))
             self._magnify = False
         self._lens.reset()
+        for gun in self._guns:
+            gun.reset()
         self._speed_level = self._speed_candidate = self._speed_frames = 0
         if self._two is not None:
             self._two.reset()
@@ -342,7 +348,10 @@ class GestureEngine:
         )
         other_v = other is not None and is_v_sign(other, self.cfg)
         self._lens.update(0.0 if other_v else 1.0)
-        actions += self._other_hand_swipe(second, other, other_v, t)
+        aim = self._aim(obs, features)
+        other_aim = self._aim(second, other)
+        actions += self._fire_guns(aim, other_aim, t)
+        actions += self._other_hand_swipe(second, other, other_v or other_aim is not None, t)
         if self._two is not None and not self._media_active:
             # Both hands pinch at about the same time for a two-hand zoom: with a second hand in
             # view the cursor hand's pinch waits a few frames longer, so it cannot click first.
@@ -361,7 +370,7 @@ class GestureEngine:
         # An engaged pinch owns the hand: curling the other fingers mid-drag must not turn the
         # pose into a "fist" (clutch) and drop whatever is being dragged.
         if self._left is LeftState.IDLE:
-            raw = self._classify(extended, sideways, features)
+            raw = Mode.GUN if aim is not None else self._classify(extended, sideways, features)
             if self._media_active and raw is not Mode.SWITCH:
                 raw = Mode.MEDIA  # media mode reads every other pose itself
         else:
@@ -448,6 +457,25 @@ class GestureEngine:
             return []
         self._magnify = want
         return [Magnify(want)]
+
+    def _aim(self, obs: HandObservation | None, f: HandFeatures | None) -> str | None:
+        """Where a finger gun points, if the hand is one (and guns are on)."""
+        if obs is None or f is None or not self.cfg.gun_slides or self._media_active:
+            return None
+        return gun_direction(obs, f, self.cfg)
+
+    def _fire_guns(self, aim: str | None, other_aim: str | None, t: float) -> list[Action]:
+        """One slide per gun, from either hand. Not while the button is held: a drag is not a
+        slide change."""
+        if self._left is not LeftState.IDLE:
+            aim = None
+        actions: list[Action] = []
+        for gun, direction in zip(self._guns, (aim, other_aim), strict=True):
+            fired = gun.update(direction)
+            if fired is not None:
+                actions.append(KeyTap(fired))
+                self._set_flash("RIGHT >>" if fired == "right" else "<< LEFT", t, 0.6)
+        return actions
 
     def _other_hand_swipe(
         self, second: HandObservation | None, f: HandFeatures | None, v_sign: bool, t: float

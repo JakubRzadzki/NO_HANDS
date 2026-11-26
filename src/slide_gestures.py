@@ -30,6 +30,7 @@ from src.gesture_engine import (
     Mode,
     is_pinch_shape,
 )
+from src.gun import GunTrigger, gun_direction
 from src.hand_tracker import HandObservation
 from src.os_controller import Action, KeyTap, Zoom
 from src.swipes import Stroke, SwipeDetector
@@ -67,6 +68,7 @@ class SlideGestures:
         self._flash_until = -math.inf
         self._two = TwoHandZoom(gesture) if gesture.two_hand_zoom else None
         self._two_active = False  # the other hand pinches: two-hand zoom
+        self._guns = (GunTrigger(gesture), GunTrigger(gesture))  # this hand, the other hand
 
     @property
     def phase(self) -> Phase:
@@ -89,6 +91,8 @@ class SlideGestures:
         if self._two is not None:
             self._two.reset()
         self._two_active = False
+        for gun in self._guns:
+            gun.reset()
         self._armed = False
         self._zoom_ref = None
         self._last_seen = None
@@ -125,7 +129,30 @@ class SlideGestures:
                 self._pinch.reset()
                 self._armed = False
 
-        actions = self._pinch_actions(features, float(centroid[1]), t)
+        # Finger guns: either hand, pointing right = next slide, left = previous.
+        aim = gun_direction(obs, features, g) if g.gun_slides else None
+        other_aim = None
+        if second is not None and g.gun_slides:
+            other = HandFeatures.from_observation(second, depth_weight=g.pinch_depth_weight)
+            other_aim = gun_direction(second, other, g)
+        actions: list[Action] = []
+        for gun, direction in zip(self._guns, (aim, other_aim), strict=True):
+            fired = gun.update(direction)
+            if fired is not None:
+                actions.append(KeyTap(fired))
+                self._set_flash(ACTIONS[fired], t)
+        if aim is not None:
+            self._swipes.cancel()  # forming the gun is not a swipe
+            return EngineOutput(
+                Mode.SLIDES,
+                self._label(t, "GUN"),
+                actions,
+                features=features,
+                extended=not_curled,
+                trail=self._swipes.trail,
+            )
+
+        actions += self._pinch_actions(features, float(centroid[1]), t)
         if self._pinch.active:
             self._swipes.cancel()  # a pinch is for zooming: no swipes meanwhile
         else:
