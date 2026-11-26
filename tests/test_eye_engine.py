@@ -218,3 +218,88 @@ def test_nose_pointer_follows_the_head_and_recentres_after_a_pause() -> None:
     d.step(**elsewhere)  # resumed: this head position becomes the new centre
     moves = of(d.hold(1.0, **elsewhere), MoveTo)
     assert moves and abs(moves[-1].x - 960) < 60 and abs(moves[-1].y - 540) < 60
+
+
+# -- dwell click (EyeDrive) -----------------------------------------------------------------------
+def test_dwell_clicks_once_per_spot() -> None:
+    d = driver(click="dwell")
+    looked = d.hold(2.5, gaze=gaze_for(1400, 300))  # jump to a spot and keep looking
+    assert of(looked, Click) == [Click("left")]  # once, however long you look
+    d.hold(0.5, gaze=gaze_for(400, 800))
+    assert of(d.hold(1.5, gaze=gaze_for(400, 800)), Click) == [Click("left")]  # a new spot
+
+
+def test_dwell_needs_the_cursor_to_move_first() -> None:
+    """Starting, resuming or coming back from eyes off with the eyes on one spot must not
+    click: the user has not chosen that spot."""
+    d = driver(click="dwell")  # the driver starts by looking at the centre for 1 s
+    assert of(d.hold(2.0, gaze=gaze_for(960, 540)), Click) == []
+
+
+def test_dwell_progress_is_reported_and_a_natural_blink_only_pauses_it() -> None:
+    d = driver(click="dwell", dwell_time=1.0)
+    d.hold(0.7, gaze=gaze_for(1400, 300))
+    progress = d.step(gaze=gaze_for(1400, 300)).dwell
+    assert 0.0 < progress < 1.0
+    d.hold(0.12, openness=CLOSED, gaze=gaze_for(1400, 300))  # a natural blink
+    d.hold(0.2, gaze=gaze_for(1400, 300))  # the cursor is frozen just after a blink
+    assert d.step(gaze=gaze_for(1400, 300)).dwell >= progress  # not restarted
+    assert of(d.hold(1.0, gaze=gaze_for(1400, 300)), Click) == [Click("left")]
+
+
+def test_with_dwell_only_a_blink_does_not_click() -> None:
+    d = driver(click="dwell")
+    assert of(d.hold(0.5, openness=CLOSED) + d.hold(0.3), Click) == []
+
+
+def test_with_both_a_blink_click_is_not_followed_by_a_dwell_click() -> None:
+    d = driver(click="both", dwell_time=1.5)
+    d.hold(0.6, gaze=gaze_for(1400, 300))
+    actions = d.hold(0.5, openness=CLOSED) + d.hold(2.0, gaze=gaze_for(1400, 300))
+    assert of(actions, Click) == [Click("left")]  # the blink's, not a second one from the dwell
+
+
+def test_no_dwell_clicks_while_scrolling_or_paused() -> None:
+    d = driver(click="dwell")
+    d.hold(0.5, openness=LEFT_WINK)  # scroll mode
+    assert of(d.hold(2.0, gaze=gaze_for(960, 900)), Click) == []
+
+
+# -- eyes off (EyeDrive) --------------------------------------------------------------------------
+def test_looking_off_the_screen_moves_and_scrolls_nothing() -> None:
+    d = driver()
+    d.hold(1.0, gaze=gaze_for(1200, 500))
+    keyboard = gaze_for(960, 1700)  # well below the screen
+    assert of(d.hold(1.0, gaze=keyboard), MoveTo) == []
+    assert d.step(gaze=keyboard).mode is FaceMode.EYES_OFF
+    back = d.hold(1.0, gaze=gaze_for(700, 400))
+    assert of(back, MoveTo) and abs(of(back, MoveTo)[-1].x - 700) < 25
+    assert d.step(gaze=gaze_for(700, 400)).mode is FaceMode.EYES
+
+    d.hold(0.5, openness=LEFT_WINK)  # scroll mode: looking at the keyboard must not scroll
+    assert of(d.hold(1.0, gaze=keyboard), Scroll) == []
+
+
+def test_eyes_off_cancels_a_running_dwell() -> None:
+    d = driver(click="dwell", dwell_time=1.0)
+    d.hold(0.8, gaze=gaze_for(1400, 300))  # most of the way to a click
+    d.hold(0.5, gaze=gaze_for(960, 1800))  # glance at the keyboard
+    assert of(d.hold(1.5, gaze=gaze_for(1400, 300)), Click) == []  # back: no surprise click
+    d.hold(0.5, present=False)  # the face lost for a moment works the same way
+    assert of(d.hold(1.5, gaze=gaze_for(1400, 300)), Click) == []
+
+
+# -- the scroll joystick --------------------------------------------------------------------------
+def test_scroll_joystick_scrolls_sideways_near_the_side_edges() -> None:
+    d = driver()
+    d.hold(0.5, openness=LEFT_WINK)
+    right = d.hold(1.0, gaze=gaze_for(1900, 540))
+    assert sum(s.dx for s in of(right, Scroll)) > 5 and sum(s.dy for s in of(right, Scroll)) == 0
+    left = d.hold(1.0, gaze=gaze_for(20, 540))
+    assert sum(s.dx for s in of(left, Scroll)) < -5
+    d.hold(0.2, gaze=gaze_for(1300, 540))  # the cursor's jump takes a couple of frames
+    assert of(d.hold(1.0, gaze=gaze_for(1300, 540)), Scroll) == []  # inside the stop zone
+
+    d = driver(scroll_horizontal=False)
+    d.hold(0.5, openness=LEFT_WINK)
+    assert of(d.hold(1.0, gaze=gaze_for(1900, 540)), Scroll) == []
