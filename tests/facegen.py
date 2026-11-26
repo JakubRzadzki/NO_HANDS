@@ -88,7 +88,7 @@ def linear_calibration(screen: tuple[int, int] = SCREEN, noise: float = 0.0) -> 
         for fy in np.linspace(0.05, 0.95, 5)
         for fx in np.linspace(0.05, 0.95, 5)
     ]
-    features = [(*gaze_for(x, y, screen), 0.0, 0.0, 0.0, 0.0) for x, y in targets]
+    features = [(*gaze_for(x, y, screen), 0.0, 0.0, 0.0, 0.0, 0.0) for x, y in targets]
     model = GazeModel.fit(features, targets, screen, [60.0] * len(targets))
     model.noise = noise
     return model

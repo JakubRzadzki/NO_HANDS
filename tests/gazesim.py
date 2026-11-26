@@ -5,6 +5,7 @@ Geometry in cm, oriented like the screen: x right, y down, z = distance in front
 The camera sits at the origin, in the screen plane, 1 cm above the screen's top edge. The eyes
 turn inside the head: eye angle = gaze angle - head angle, and the iris shifts by
 eyeball radius * sin(eye angle), measured in eye widths like MediaPipe's iris offset.
+A rolled (tilted) head turns the eye's axes with it: the iris offset is reported along them.
 """
 
 from __future__ import annotations
@@ -17,8 +18,8 @@ import numpy as np
 
 from src.gaze import CalibrationSession, Sample
 
-Pose = dict[str, float]  # yaw, pitch (deg), x, y, distance (cm)
-REST: Pose = {"yaw": 0.0, "pitch": 0.0, "x": 0.0, "y": 8.0, "distance": 60.0}
+Pose = dict[str, float]  # yaw, pitch, roll (deg), x, y, distance (cm)
+REST: Pose = {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "x": 0.0, "y": 8.0, "distance": 60.0}
 
 
 @dataclass
@@ -42,20 +43,23 @@ class Viewer:
         dx, dy, d = tx - p["x"], ty - p["y"], p["distance"]
         gaze_yaw = math.degrees(math.atan2(dx, d))
         gaze_pitch = math.degrees(math.atan2(dy, math.hypot(dx, d)))
-        eye_yaw = math.radians(gaze_yaw - p["yaw"])
-        eye_pitch = math.radians(gaze_pitch - p["pitch"])
+        # The eye's turn in screen axes, then in the (rolled) head's own axes.
+        turn_x, turn_y = gaze_yaw - p["yaw"], gaze_pitch - p["pitch"]
+        r = math.radians(p["roll"])
+        eye_yaw = math.radians(turn_x * math.cos(r) + turn_y * math.sin(r))
+        eye_pitch = math.radians(-turn_x * math.sin(r) + turn_y * math.cos(r))
         iris = np.array(
             [
                 self.eye_radius * math.sin(eye_yaw) + self.iris_bias[0],
                 self.eye_radius * math.sin(eye_pitch) + self.iris_bias[1],
             ]
         )
-        angles = np.array([p["yaw"], p["pitch"]])
+        angles = np.array([p["yaw"], p["pitch"], p["roll"]])
         if self.iris_noise > 0:
             iris = iris + self.rng.normal(0.0, self.iris_noise, 2)
         if self.angle_noise > 0:
-            angles = angles + self.rng.normal(0.0, self.angle_noise, 2)
-        features = (*iris.tolist(), *angles.tolist(), p["x"], p["y"])
+            angles = angles + self.rng.normal(0.0, self.angle_noise, 3)
+        features = (*iris.tolist(), *angles[:2].tolist(), p["x"], p["y"], float(angles[2]))
         return features, d
 
     def random_pose(self, rng: np.random.Generator) -> Pose:

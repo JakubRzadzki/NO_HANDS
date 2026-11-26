@@ -34,7 +34,15 @@ EYE_OUTLINES: tuple[dict[str, tuple[int, int]], ...] = (
     {"corners": (33, 133), "upper": (160, 158), "lower": (144, 153)},
     {"corners": (263, 362), "upper": (387, 385), "lower": (373, 380)},
 )
-GAZE_FEATURES = ("iris_x", "iris_y", "head_yaw", "head_pitch", "head_x", "head_y")
+GAZE_FEATURES = (
+    "iris_x",
+    "iris_y",
+    "head_yaw",
+    "head_pitch",
+    "head_x",
+    "head_y",
+    "head_roll",
+)
 
 
 @dataclass(frozen=True)
@@ -120,9 +128,19 @@ def measure_eyes(obs: FaceObservation, mirrored: bool = True) -> tuple[EyeMeasur
     return (image_left, image_right) if mirrored else (image_right, image_left)
 
 
+def eye_line_roll(left: EyeMeasure, right: EyeMeasure, mirrored: bool = True) -> float:
+    """Head roll in degrees, screen-oriented (x right, y down): + = the head tilted so that its
+    right side (on the screen) is lower. Taken from the line through the two eye centres, the
+    same landmarks the iris offset is measured against, so its sign can never disagree with
+    theirs."""
+    a, b = (left, right) if left.center[0] <= right.center[0] else (right, left)
+    angle = math.degrees(math.atan2(b.center[1] - a.center[1], b.center[0] - a.center[0]))
+    return angle if mirrored else -angle
+
+
 def gaze_features(
     obs: FaceObservation, left: EyeMeasure, right: EyeMeasure, mirrored: bool = True
-) -> tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float]:
     """Everything the gaze point depends on that a webcam can see (see GAZE_FEATURES), all from
     the user's point of view and oriented like the screen: x > 0 = right, y > 0 = down.
     Iris offsets in eye widths, head angles in degrees, head position in cm.
@@ -131,13 +149,20 @@ def gaze_features(
     where the head is. The iris offset alone (an earlier version) only holds while the head
     stays exactly where it was during calibration.
 
+    The iris offset is measured along the eye's own axes, which tilt with the head. The roll
+    (last feature) lets the gaze model turn it back into screen axes: with the head tilted by
+    10 degrees, looking at the right edge otherwise also moves the cursor ~17% of that distance
+    down. Like the gaze-estimation network of computer_pointer_controller, which is given all
+    three head angles (yaw, pitch and roll) next to the eye images.
+
     The lid opening is deliberately not used: it follows vertical gaze a little, but it also
     changes with every smile or squint, which would move the cursor."""
     iris_x = (left.iris[0] + right.iris[0]) / 2.0
     iris_y = (left.iris[1] + right.iris[1]) / 2.0
     yaw, pitch, _ = obs.head
     head_x, head_y, _ = obs.head_position
-    return (iris_x if mirrored else -iris_x, iris_y, yaw, pitch, head_x, -head_y)
+    roll = eye_line_roll(left, right, mirrored)
+    return (iris_x if mirrored else -iris_x, iris_y, yaw, pitch, head_x, -head_y, roll)
 
 
 class FaceTracker:

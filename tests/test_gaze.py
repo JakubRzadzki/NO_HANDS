@@ -25,7 +25,9 @@ def calibrated(
     calibrate(session, viewer, head=head, glitch=glitch)
     if eye_only:  # the same recording with all head information removed
         for step in session.steps:
-            step.samples = [((*f[:2], 0.0, 0.0, 0.0, REST["y"]), 60.0) for f, _ in step.samples]
+            step.samples = [
+                ((*f[:2], 0.0, 0.0, 0.0, REST["y"], 0.0), 60.0) for f, _ in step.samples
+            ]
     return session.result()
 
 
@@ -39,7 +41,7 @@ def errors(
         target = (rng.uniform(0, SCREEN[0] - 1), rng.uniform(0, SCREEN[1] - 1))
         features, distance = viewer.features(target, **pose)
         if eye_only:  # what an iris-only model sees: no head information at all
-            features = (*features[:2], 0.0, 0.0, 0.0, REST["y"])
+            features = (*features[:2], 0.0, 0.0, 0.0, REST["y"], 0.0)
             distance = REST["distance"]
         x, y = model.predict(features, distance)
         out.append(math.hypot(x - target[0], y - target[1]))
@@ -74,6 +76,25 @@ def test_rotation_and_position_moving_together_do_not_confuse_the_fit() -> None:
     model = calibrated(viewer)  # the simulated user follows the arrows: rotation moves the eyes
     lean = [{"x": x} for x in (-5.0, -2.5, 2.5, 5.0)] * 50  # lean sideways, no turn
     assert np.median(errors(model, viewer, lean)) < 40
+
+
+def test_a_tilted_head_is_compensated() -> None:
+    """Head roll turns the eye's axes: without turning the iris offset back into screen axes
+    (the roll the gaze network of computer_pointer_controller gets next to yaw and pitch), a
+    10-degree tilt put the cursor ~105 px off in simulation; with it ~28 px."""
+    viewer = Viewer()
+    model = calibrated(viewer)
+    tilted = [{"roll": roll} for roll in (-10.0, 10.0)] * 100
+    rng = np.random.default_rng(1)
+    ignored = []
+    for pose in tilted:  # the same model with the roll hidden from it
+        target = (rng.uniform(0, SCREEN[0] - 1), rng.uniform(0, SCREEN[1] - 1))
+        features, distance = viewer.features(target, **pose)
+        x, y = model.predict((*features[:6], 0.0), distance)
+        ignored.append(math.hypot(x - target[0], y - target[1]))
+    compensated = errors(model, viewer, tilted)
+    assert np.median(compensated) < 45
+    assert np.median(compensated) < 0.35 * np.median(ignored)
 
 
 def test_sitting_closer_or_farther_is_handled() -> None:
@@ -133,7 +154,7 @@ def test_validation_catches_a_user_who_looked_elsewhere() -> None:
 
 def test_fit_needs_enough_samples() -> None:
     with pytest.raises(ValueError):
-        GazeModel.fit([(0.0,) * 6] * 10, [(0.0, 0.0)] * 10, SCREEN)
+        GazeModel.fit([(0.0,) * 7] * 10, [(0.0, 0.0)] * 10, SCREEN)
 
 
 def test_model_round_trip_and_rejections(tmp_path: Path) -> None:
@@ -143,7 +164,7 @@ def test_model_round_trip_and_rejections(tmp_path: Path) -> None:
     model.save(path)
     loaded = GazeModel.load(path, SCREEN)
     assert loaded is not None
-    features = (0.05, -0.02, 3.0, -2.0, 1.0, 5.0)
+    features = (0.05, -0.02, 3.0, -2.0, 1.0, 5.0, 4.0)
     assert loaded.predict(features, 55.0) == pytest.approx(model.predict(features, 55.0))
     assert (loaded.noise, loaded.validation_error) == (42.0, 55.0)
     assert GazeModel.load(path, (2560, 1440)) is None  # made for another screen
