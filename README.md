@@ -30,6 +30,11 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **A loose finger gun works, and it never zooms the screen.** The other fingers only have to
+  be clearly lower than the index, not folded all the way; before, a gun with the pinky half
+  out was read as the horns, so moving it zoomed the screen and the slide stayed. The horns
+  now need the pinky straight. The preview shows what a gun is missing ("thumb up",
+  "point to the side", ...).
 - **The magnifier is gone.** A loosely made finger gun looked like the magnifier's V to the
   other hand, so the system magnifier came on unasked (on a 4K screen it slowed the whole
   computer down), and turning it off sent Win + Esc, whose Esc could reach the preview window
@@ -193,7 +198,7 @@ released.
 | Previous / next slide | **swipe the other hand** left / right | off by default (`GestureConfig.other_hand_slides = True`) |
 | Previous / next slide | **flick** the open hand left / right **and straight back** | off by default (`GestureConfig.flick_slides = True`); the cursor ends where it was |
 | Scroll | **the whole hand turned sideways**, its edge to the camera (like a karate chop); move it up / down / sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone. A fist turned sideways is still a fist |
-| Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
+| Zoom | "horns": **index + pinky** up and straight, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
 | Zoom with two hands | **pinch both hands**, then pull them **apart** (zoom in) or **together** (zoom out) | like two fingers on a touchpad; one step per 12% change of the distance; while the other hand pinches, the cursor holds still and nothing clicks |
 | Slower cursor | **fold the pinky** (index, middle, ring out) | half speed: for small targets |
 | Slowest cursor | **V**: index + middle out (apart or together), ring + pinky folded | quarter speed; clicking works as usual |
@@ -498,7 +503,7 @@ parameters are in `config.py`.
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
 | **Hand mouse:** clicks select text or drag things | `GestureConfig.drag_start` ↑ (e.g. 0.5 palm lengths) |
 | **Hand mouse:** a drag takes too much hand travel to start | `drag_start` ↓ (e.g. 0.25) |
-| **Any mode:** the finger gun does not fire | point to the side (not at the camera), thumb clearly up, other fingers folded, hold still ~0.2 s; the label says GUN while it is seen; `gun_thumb_angle` ↓ (e.g. 40), `gun_max_tilt` ↑ (e.g. 55) |
+| **Any mode:** the finger gun does not fire | the preview's `gun:` line says what is missing; point to the side (not at the camera), thumb clearly up, the other fingers lower than the index, hold still ~0.2 s; `gun_thumb_angle` ↓ (e.g. 40), `gun_max_tilt` ↑ (e.g. 55) |
 | **Any mode:** pointing at something changes the slide | keep the thumb along the hand when pointing; `gun_thumb_angle` ↑ (e.g. 60), `gun_confirm_frames` ↑ (e.g. 10) |
 | **Hand mouse:** the flick does not change the slide | use the finger gun; the flick is off by default (`flick_slides`) |
 | **Slides:** a swipe is missed | swipe at least ~9 cm (a palm length), at an even pace, with an open hand, not to the frame edge; the HUD shows the stroke in palm lengths |
