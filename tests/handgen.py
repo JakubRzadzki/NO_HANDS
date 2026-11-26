@@ -40,11 +40,16 @@ FIST: dict[str, Any] = {
     "curl": {"index": 1.0, "middle": 1.0, "ring": 1.0, "pinky": 1.0},
     "thumb": "tucked",
 }
-SCROLL: dict[str, Any] = {"yaw_deg": 80.0}  # the open hand turned sideways, edge to the camera
-TOGETHER: dict[str, Any] = {  # index + middle up and touching, ring + pinky curled (old scroll)
+SIDEWAYS: dict[str, Any] = {"yaw_deg": 80.0}  # the open hand turned sideways, edge to the camera
+TOGETHER: dict[str, Any] = {  # index + middle up and touching, ring + pinky curled: scroll
     "curl": {"ring": 1.0, "pinky": 1.0},
     "spread": {"index": -6.0, "middle": 4.0},
     "thumb": "tucked",
+}
+SCROLL = TOGETHER  # two-finger scroll (GestureConfig.scroll_two_fingers)
+STOP: dict[str, Any] = {}  # the other hand's stop sign: an open hand, fingers up (= OPEN)
+RELAXED: dict[str, Any] = {  # a hand just in view: fingers loose, not straight
+    "curl": {"index": 0.47, "middle": 0.47, "ring": 0.47, "pinky": 0.47}
 }
 VICTORY: dict[str, Any] = {  # index + middle up and spread, ring + pinky curled
     "curl": {"ring": 1.0, "pinky": 1.0},

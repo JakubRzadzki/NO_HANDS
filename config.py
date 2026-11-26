@@ -180,12 +180,24 @@ class GestureConfig:
     # both hands pinch at about the same time, and the first must not click meanwhile.
     two_hand_click_delay_frames: int = 4
 
-    # Scroll: the whole hand turned sideways, its edge to the camera ("karate chop"), then moved
-    # up / down. Works like a joystick: displacement from where the gesture started sets the
-    # scroll *speed*. Measured as the palm's width (index knuckle -> pinky knuckle) over its
-    # length: 0.62-1.12 on real hands facing the camera (0.38 for one pinching hand), about
-    # 0.1-0.25 edge on. (Scroll used to be index + middle together, which the precision V kept
-    # turning into.)
+    # Scroll with a stop sign (src/stop_hand.py): raise the other hand, palm to the camera,
+    # fingers up and straight, then move this hand up / down. Works like a joystick:
+    # displacement from where the scroll started sets the scroll *speed*. The stop hand is a
+    # modifier, so scroll clashes with no pose of the cursor hand (the V, the gun, the pinch).
+    scroll_with_other_hand: bool = True
+    stop_max_tilt: float = 35.0  # deg the stop hand's fingers may lean from upright
+    stop_palm_width: float = 0.45  # palm width / length at least: facing the camera, not sideways
+    stop_confirm_frames: int = 7  # the stop sign must be seen this long (~0.25 s) ...
+    stop_release_frames: int = 6  # ... and be gone this long to end the scroll
+    # Scroll with index + middle together (ring + pinky folded) instead. Off: apart, the same
+    # two fingers are the V of the slowest cursor, and the two kept swapping.
+    scroll_two_fingers: bool = False
+    scroll_join_enter: float = 0.28  # index tip <-> middle tip, palm lengths
+    scroll_join_exit: float = 0.36
+    # Scroll with the whole hand turned sideways instead (edge to the camera), measured by the
+    # palm's width (index knuckle -> pinky knuckle) over its length: 0.62-1.12 on real hands
+    # facing the camera, about 0.1-0.25 edge on. Off: the two fingers are the default again.
+    scroll_sideways: bool = False
     scroll_palm_enter: float = 0.25  # narrower than this = turned sideways = scroll
     scroll_palm_exit: float = 0.35
     scroll_deadzone: float = 0.15  # palm lengths of travel before scrolling starts
@@ -386,6 +398,10 @@ class AppConfig:
             (g.flick_distance > 0 and g.flick_speed > 0, "flick distance / speed must be > 0"),
             (g.drag_start > 0, "drag_start must be > 0"),
             (
+                g.stop_confirm_frames >= 1 and g.stop_release_frames >= 1,
+                "stop_confirm_frames / stop_release_frames must be >= 1",
+            ),
+            (
                 g.gun_confirm_frames >= 1 and g.gun_release_frames >= 1,
                 "gun_confirm_frames / gun_release_frames must be >= 1",
             ),
@@ -407,6 +423,10 @@ class AppConfig:
             (
                 g.finger_curled_below < g.finger_extended_above,
                 "need finger_curled_below < finger_extended_above",
+            ),
+            (
+                0 < g.scroll_join_enter < g.scroll_join_exit,
+                "need 0 < scroll_join_enter < scroll_join_exit",
             ),
             (
                 0 < g.scroll_palm_enter < g.scroll_palm_exit,

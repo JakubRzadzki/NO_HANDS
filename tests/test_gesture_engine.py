@@ -26,6 +26,8 @@ from tests.handgen import (
     FIST,
     OPEN,
     SCROLL,
+    SIDEWAYS,
+    STOP,
     TOGETHER,
     VICTORY,
     Driver,
@@ -395,11 +397,13 @@ def test_reset_returns_release_when_dragging() -> None:
 
 # -- posture modes ---------------------------------------------------------------------------
 def scroll_ticks(fps: float, palm_lengths_up: float, palm_px: float = 150.0) -> int:
+    """The other hand shows a stop sign, this hand moves up / down (the default scroll)."""
     d = settled(fps=fps)
-    d.hold(SCROLL, 0.2, palm_px=palm_px)
+    stop = {"center": (0.2, 0.55), "palm_px": palm_px, **STOP}
+    d.hold(OPEN, 0.3, second=stop, palm_px=palm_px)
     assert d.outputs[-1].mode is Mode.SCROLL
     up = (CENTER[0], CENTER[1] - palm_lengths_up * palm_px / 720)
-    actions = d.hold(SCROLL, 1.0, center=up, palm_px=palm_px)
+    actions = d.hold(OPEN, 1.0, second=stop, center=up, palm_px=palm_px)
     assert of(actions, MoveTo) == []  # cursor locked while scrolling
     assert all(s.dx == 0 for s in of(actions, Scroll))
     return sum(s.dy for s in of(actions, Scroll))
@@ -419,17 +423,23 @@ def test_scroll_direction_dead_zone_and_scale_invariance() -> None:
     assert abs(scroll_ticks(60, 0.5, palm_px=70) - scroll_ticks(60, 0.5, palm_px=280)) <= 1
 
 
-def test_two_fingers_are_precision_never_scroll() -> None:
-    """Scroll used to be index + middle together, and the precision V kept turning into it.
-    Now two fingers, together or apart, are the pointer at its slowest speed."""
-    for pose in (VICTORY, TOGETHER):
-        d = settled()
-        d.hold(pose, 0.3)
-        assert d.outputs[-1].mode is Mode.POINTER and d.outputs[-1].speed == 0.25
-
-
-def test_scroll_is_the_whole_hand_turned_sideways() -> None:
+def test_two_fingers_together_scroll_only_when_switched_on() -> None:
     d = settled()
+    d.hold(TOGETHER, 0.3)
+    assert d.outputs[-1].mode is Mode.POINTER  # off by default: the stop sign scrolls
+    d = settled(scroll_two_fingers=True)
+    d.hold(TOGETHER, 0.3)
+    assert d.outputs[-1].mode is Mode.SCROLL
+    d = settled()
+    d.hold(VICTORY, 0.3)
+    assert d.outputs[-1].mode is Mode.POINTER and d.outputs[-1].speed == 0.25
+
+
+def test_turning_the_hand_sideways_scrolls_only_when_switched_on() -> None:
+    d = settled()
+    d.hold(SIDEWAYS, 0.3)
+    assert d.outputs[-1].mode is Mode.POINTER  # off by default: the two fingers scroll
+    d = settled(scroll_sideways=True)
     for yaw in (0.0, 30.0, 55.0):  # facing the camera, or turned a little: pointer
         d.hold({"yaw_deg": yaw}, 0.3)
         assert d.outputs[-1].mode is Mode.POINTER
@@ -508,7 +518,7 @@ def test_postures_are_rotation_invariant(roll_deg: float) -> None:
     """Regression: `tip.y < pip.y` (the original) misreads every finger once the hand is
     rotated ~90 degrees; ratios of distances do not care about rotation."""
     for pose, expected in ((OPEN, Mode.POINTER), (FIST, Mode.CLUTCH), (SCROLL, Mode.SCROLL)):
-        d = Driver(make_engine())
+        d = Driver(make_engine(scroll_two_fingers=True))
         d.hold(pose, 0.2, roll_deg=roll_deg)
         assert d.outputs[-1].mode is expected, (pose, roll_deg)
     d = Driver(make_engine())

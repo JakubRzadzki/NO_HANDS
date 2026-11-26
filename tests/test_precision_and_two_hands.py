@@ -10,7 +10,7 @@ from config import AppConfig
 from src.gesture_engine import LeftState, Mode
 from src.os_controller import Action, KeyTap, MoveTo, Press, Release, Zoom
 from src.slide_gestures import SlideGestures
-from tests.handgen import CENTER, OPEN, VICTORY, Driver, make_engine, pinch
+from tests.handgen import CENTER, OPEN, RELAXED, VICTORY, Driver, make_engine, pinch
 
 PINKY_FOLDED: dict[str, Any] = {"curl": {"pinky": 1.0}}
 
@@ -93,7 +93,8 @@ def test_the_horns_with_half_folded_fingers_still_zoom() -> None:
 
 
 def left_hand(x: float, pose: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {"center": (x, 0.55), **(pose or OPEN)}
+    """The other hand, relaxed unless a pose is given (an open hand raised is a stop sign)."""
+    return {"center": (x, 0.55), **(pose or RELAXED)}
 
 
 def test_two_hands_pinched_and_pulled_apart_zoom_in_and_together_zoom_out() -> None:

@@ -4,8 +4,7 @@ Per frame:
 
 1. Features - dimensionless measurements: pinch ratios, finger-extension ratios.
 2. Posture  - which mode the hand asks for (POINTER / SCROLL / ZOOM / CLUTCH), debounced over a
-              few frames so one misdetected frame cannot switch modes. SCROLL is the whole hand
-              turned sideways, edge to the camera.
+              few frames so one misdetected frame cannot switch modes.
 3. Mode     - POINTER runs the pinch latches (click, drag, right click, double click);
               SCROLL and ZOOM turn hand motion into wheel ticks; CLUTCH does nothing.
 4. Cursor   - the CursorMapper turns the anchor (knuckles, not fingertips) into a move unless
@@ -48,6 +47,7 @@ from src.pinch import HysteresisLatch as HysteresisLatch
 from src.pinch import pinch_distance as pinch_distance
 from src.pointer import CursorMapper
 from src.smoother import FloatArray
+from src.stop_hand import stop_check
 from src.swipes import SwipeDetector
 from src.two_hands import TwoHandZoom
 
@@ -102,6 +102,7 @@ class HandFeatures:
     pinch: dict[Finger, float]  # thumb tip <-> finger tip, palm lengths
     extension: dict[Finger, float]  # dist(wrist, tip) / dist(wrist, pip)
     palm_width: float  # index knuckle <-> pinky knuckle in the image, palm lengths
+    index_middle_gap: float  # index tip <-> middle tip, palm lengths
     anchor: tuple[float, float]  # cursor anchor, normalized frame coordinates
     anchor_px: tuple[float, float]  # the same anchor in px (zoom measures its travel)
     scroll_point: tuple[float, float]  # px, centre of the palm (the whole hand scrolls)
@@ -133,6 +134,7 @@ class HandFeatures:
             pinch=pinch,
             extension=extension,
             palm_width=float(math.hypot(knuckles[0], knuckles[1])) / obs.palm_scale,
+            index_middle_gap=obs.ndist(INDEX_TIP, MIDDLE_TIP),
             anchor=(float(anchor[0]), float(anchor[1])),
             anchor_px=(float(anchor_px[0]), float(anchor_px[1])),
             scroll_point=(float(scroll_point[0]), float(scroll_point[1])),
@@ -172,6 +174,7 @@ class EngineOutput:
     stroke: tuple[float, float] | None = None  # --slides: stroke so far, palm lengths
     speed: float = 1.0  # cursor speed: < 1 = precision (fingers folded)
     gun_hint: str = ""  # why the hand is or is not a finger gun, for the preview
+    stop_hint: str = ""  # why the other hand is or is not a stop sign (scroll), for the preview
     two_hands: tuple[tuple[float, float], tuple[float, float]] | None = None  # the two pinches
     pinched_hands: tuple[bool, bool] = (False, False)  # two-hand mode: which hand pinches
 
@@ -208,6 +211,15 @@ class GestureEngine:
         # Finger guns, one trigger per hand: pointing right = next slide, left = previous.
         self._guns = (GunTrigger(cfg), GunTrigger(cfg))
         self._gun_hint = ""
+        # The other hand's stop sign = scroll, debounced: fed 0 (seen) or 1 (not seen).
+        self._stop = HysteresisLatch(
+            0.5,
+            0.5 + 1e-9,
+            confirm_frames=cfg.stop_confirm_frames,
+            release_frames=cfg.stop_release_frames,
+        )
+        self._stop_scrolling = False
+        self._stop_hint = ""
         self._last_second: HandObservation | None = None
         self._media_active = False  # survives tracking loss: lowering the hand is normal here
         self._two = TwoHandZoom(cfg) if cfg.two_hand_zoom else None
@@ -223,6 +235,7 @@ class GestureEngine:
             for finger in Finger
         }
         self._sideways = HysteresisLatch(cfg.scroll_palm_enter, cfg.scroll_palm_exit)
+        self._joined = HysteresisLatch(cfg.scroll_join_enter, cfg.scroll_join_exit)
         self._pinch = {
             finger: HysteresisLatch(
                 cfg.pinch_enter,
@@ -275,6 +288,8 @@ class GestureEngine:
         actions: list[Action] = [] if self._left is LeftState.IDLE else [Release("left")]
         for gun in self._guns:
             gun.reset()
+        self._stop.reset()
+        self._stop_scrolling = False
         self._speed_level = self._speed_candidate = self._speed_frames = 0
         if self._two is not None:
             self._two.reset()
@@ -284,7 +299,12 @@ class GestureEngine:
         self._cursor_frozen = False
         if self._swipes is not None:
             self._swipes.reset()
-        for latch in (*self._pinch.values(), *self._finger.values(), self._sideways):
+        for latch in (
+            *self._pinch.values(),
+            *self._finger.values(),
+            self._sideways,
+            self._joined,
+        ):
             latch.reset()
         self._armed = dict.fromkeys(PINCH_FINGERS, False)
         self._mode = Mode.NO_HAND
@@ -311,7 +331,8 @@ class GestureEngine:
             obs, self._anchor_weight, self.cfg.pinch_depth_weight
         )
         extended = {f: latch.update(features.extension[f]) for f, latch in self._finger.items()}
-        sideways = self._sideways.update(features.palm_width)
+        sideways = self._sideways.update(features.palm_width) and self.cfg.scroll_sideways
+        joined = self._joined.update(features.index_middle_gap)
         if self._mode is Mode.NO_HAND:  # hand (re)acquired
             self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
 
@@ -341,10 +362,23 @@ class GestureEngine:
                 return self._two_hands(obs, features, extended, t)
             if self._mode is Mode.TWO_HANDS:
                 actions += self._leave_two_hands()
+        # The other hand's stop sign: this hand's up / down movement scrolls.
+        stop_seen, self._stop_hint = False, ""
+        if self.cfg.scroll_with_other_hand and second is not None and other is not None:
+            stop_seen, self._stop_hint = stop_check(second, other, self.cfg)
+        stopped = self._stop.update(0.0 if stop_seen else 1.0)
+        if stopped and self._left is LeftState.IDLE and not self._media_active:
+            return self._stop_scroll(features, extended, dt, t)
+        if self._stop_scrolling:
+            actions += self._leave_stop_scroll()
         # An engaged pinch owns the hand: curling the other fingers mid-drag must not turn the
         # pose into a "fist" (clutch) and drop whatever is being dragged.
         if self._left is LeftState.IDLE:
-            raw = Mode.GUN if aim is not None else self._classify(extended, sideways, features)
+            raw = (
+                Mode.GUN
+                if aim is not None
+                else self._classify(extended, joined, sideways, features)
+            )
             if self._media_active and raw is not Mode.SWITCH:
                 raw = Mode.MEDIA  # media mode reads every other pose itself
         else:
@@ -400,6 +434,7 @@ class GestureEngine:
             volume_rate=self._media.volume_rate if self._mode is Mode.MEDIA else 0.0,
             speed=self.speed,
             gun_hint=self._gun_hint,
+            stop_hint=self._stop_hint,
         )
 
     # -- precision ---------------------------------------------------------------------------
@@ -509,6 +544,50 @@ class GestureEngine:
             pinched_hands=self._two.pinched,
         )
 
+    def _stop_scroll(
+        self, features: HandFeatures, extended: dict[Finger, bool], dt: float, t: float
+    ) -> EngineOutput:
+        """The other hand shows a stop sign: this hand's up / down movement scrolls, the cursor
+        holds still and nothing clicks."""
+        actions: list[Action] = []
+        if not self._stop_scrolling:
+            previous, self._mode = self._mode, Mode.SCROLL
+            self._candidate, self._candidate_frames = None, 0
+            if previous is not Mode.SCROLL:
+                actions += self._on_mode_change(previous)
+            self._exit_scroll()  # the scroll starts where this hand is now
+            self._stop_scrolling = True
+        if self._swipes is not None:
+            self._swipes.reset()
+        self._cursor_frozen = True
+        self.mapper.update(features.anchor, t, frozen=True)  # keep the filter converged
+        actions += self._scroll(features, dt)
+        return EngineOutput(
+            mode=Mode.SCROLL,
+            label="SCROLL (other hand: stop)",
+            actions=actions,
+            cursor_frozen=True,
+            features=features,
+            extended=extended,
+            scroll_origin=self._scroll_origin,
+            scroll_rate=(float(self._scroll_rate[0]), float(self._scroll_rate[1])),
+            media_active=self._media_active,
+            speed=self.speed,
+            gun_hint=self._gun_hint,
+            stop_hint=self._stop_hint,
+        )
+
+    def _leave_stop_scroll(self) -> list[Action]:
+        """The stop hand went down: back to pointing. A pinch made meanwhile must not click."""
+        self._stop_scrolling = False
+        self._exit_scroll()
+        self._mode = Mode.MEDIA if self._media_active else Mode.POINTER
+        self._candidate, self._candidate_frames = None, 0
+        for latch in self._pinch.values():
+            latch.reset()
+        self._armed = dict.fromkeys(PINCH_FINGERS, False)
+        return []
+
     def _leave_two_hands(self) -> list[Action]:
         """Back to one hand. Its fingers may still be pinched: that must not click."""
         assert self._two is not None
@@ -538,15 +617,20 @@ class GestureEngine:
         return EngineOutput(Mode.NO_HAND, "NO HAND", actions, media_active=self._media_active)
 
     # -- posture -----------------------------------------------------------------------------
-    def _classify(self, ext: dict[Finger, bool], sideways: bool, f: HandFeatures) -> Mode:
+    def _classify(
+        self, ext: dict[Finger, bool], joined: bool, sideways: bool, f: HandFeatures
+    ) -> Mode:
         i, m, r, p = (ext[Finger.INDEX], ext[Finger.MIDDLE], ext[Finger.RING], ext[Finger.PINKY])
         if not (i or m or r or p):
             # A fist, wherever the thumb is: in a quarter of real fists its tip lies right next
             # to the folded index tip, which must not count as a pinch.
             return Mode.CLUTCH
         if sideways and i + m + r + p >= 2:
-            # The whole hand turned sideways: scroll. (A fist turned sideways is still a fist.)
+            # The whole hand turned sideways (scroll_sideways): scroll. A fist turned sideways
+            # is still a fist.
             return Mode.SCROLL
+        if i and m and not r and not p and joined and self.cfg.scroll_two_fingers:
+            return Mode.SCROLL  # index + middle together; apart they are the slowest cursor
         if p and not (i or m or r):
             return Mode.SWITCH  # shaka: only the pinky (and the thumb) out
         # The horns need the pinky straight now, not just not yet folded: a finger gun with the

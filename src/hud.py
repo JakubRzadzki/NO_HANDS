@@ -230,14 +230,15 @@ class Hud:
             )
             ext = "/".join(f"{out.features.extension[finger]:.2f}" for finger in Finger)
             lines.append((f"extended {fingers}  ({ext})", 0.45, WHITE))
-            lines.append(
-                (
-                    f"palm width {out.features.palm_width:.2f}  "
-                    f"(scroll below {g.scroll_palm_enter:.2f}: hand turned sideways)",
-                    0.45,
-                    WHITE,
+            if g.scroll_sideways:
+                lines.append(
+                    (
+                        f"palm width {out.features.palm_width:.2f}  "
+                        f"(scroll below {g.scroll_palm_enter:.2f}: hand turned sideways)",
+                        0.45,
+                        WHITE,
+                    )
                 )
-            )
             if out.mode is Mode.SCROLL:
                 rx, ry = out.scroll_rate
                 lines.append((f"scroll rate x {rx:+.1f}  y {ry:+.1f} ticks/s", 0.45, YELLOW))
@@ -249,6 +250,9 @@ class Hud:
                 lines.append((knob, 0.45, ORANGE))
             if out.pending_mode is not None:
                 lines.append((f"switching to {out.pending_mode.value}...", 0.45, GRAY))
+            if out.stop_hint:
+                stop_on = out.stop_hint == "STOP"
+                lines.append((f"other hand: {out.stop_hint}", 0.45, YELLOW if stop_on else GRAY))
             if out.gun_hint:
                 gun_on = out.gun_hint.startswith("GUN")
                 lines.append((f"gun: {out.gun_hint}", 0.45, GREEN if gun_on else GRAY))
@@ -269,7 +273,7 @@ class Hud:
             lines.append(("finger gun pointing right / left: next / previous slide", 0.4, GRAY))
             lines.append(("fold the pinky: slower   V (index + middle): slowest", 0.4, GRAY))
             lines.append(("both hands pinched, pull apart / together: zoom", 0.4, GRAY))
-            lines.append(("hand turned sideways, move up / down: scroll", 0.4, GRAY))
+            lines.append(("other hand stop (palm up), this hand up / down: scroll", 0.4, GRAY))
         lines.append(("q/ESC quit   p pause   shaka 0.6 s: mouse <-> media", 0.4, GRAY))
         lines.append(("ctrl+alt+p / ctrl+alt+q: pause / quit from anywhere", 0.4, GRAY))
         draw_text_panel(frame, lines)
