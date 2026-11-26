@@ -380,15 +380,22 @@ def build() -> dict[str, Any]:
         return c
 
     def scroll() -> Canvas:
-        c = Canvas()
-        sideways(c)
-        arrow(c, (0.75, 1.5), (0.75, 2.05))
-        arrow(c, (0.75, 1.3), (0.75, 0.75))
+        c = Canvas(0.16, (0.0, 0.0))
+        stop = open_hand(False)
+        stop.active |= {"index", "middle", "ring", "pinky"}
+        stop.mirror, stop.shift = True, (-1.15, 0.0)
+        mover = open_hand()
+        mover.shift = (0.75, 0.0)
+        for h in (stop, mover):
+            h.draw(c)
+        label(c, "STOP", (-1.15, 2.45))
+        arrow(c, (2.35, 1.3), (2.35, 1.95))
+        arrow(c, (2.35, 1.1), (2.35, 0.45))
         caption(
             c,
             "Scroll",
-            "whole hand turned sideways, edge to the camera",
-            "move up / down: further = faster",
+            "other hand: stop (palm to the camera)",
+            "this hand up / down: further = faster",
         )
         return c
 
