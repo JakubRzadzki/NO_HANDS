@@ -249,6 +249,9 @@ class Hud:
                 lines.append((knob, 0.45, ORANGE))
             if out.pending_mode is not None:
                 lines.append((f"switching to {out.pending_mode.value}...", 0.45, GRAY))
+            if out.gun_hint:
+                gun_on = out.gun_hint.startswith("GUN")
+                lines.append((f"gun: {out.gun_hint}", 0.45, GREEN if gun_on else GRAY))
             if out.mode is Mode.POINTER and out.speed < 1.0:
                 lines.append((f"PRECISION: cursor speed {out.speed:.0%}", 0.5, GREEN))
         if out.media_active:

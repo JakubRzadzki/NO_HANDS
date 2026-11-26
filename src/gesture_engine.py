@@ -24,7 +24,7 @@ from enum import Enum
 import numpy as np
 
 from config import GestureConfig, MediaConfig, SlidesConfig
-from src.gun import GunTrigger, gun_direction
+from src.gun import GunTrigger, gun_check
 from src.hand_tracker import (
     INDEX_MCP,
     INDEX_PIP,
@@ -171,6 +171,7 @@ class EngineOutput:
     trail: list[tuple[float, float]] = field(default_factory=list)  # --slides: wrist path, px
     stroke: tuple[float, float] | None = None  # --slides: stroke so far, palm lengths
     speed: float = 1.0  # cursor speed: < 1 = precision (fingers folded)
+    gun_hint: str = ""  # why the hand is or is not a finger gun, for the preview
     two_hands: tuple[tuple[float, float], tuple[float, float]] | None = None  # the two pinches
     pinched_hands: tuple[bool, bool] = (False, False)  # two-hand mode: which hand pinches
 
@@ -206,6 +207,8 @@ class GestureEngine:
         self._other_seen: float | None = None  # when the other hand was last seen
         # Finger guns, one trigger per hand: pointing right = next slide, left = previous.
         self._guns = (GunTrigger(cfg), GunTrigger(cfg))
+        self._gun_hint = ""
+        self._last_second: HandObservation | None = None
         self._media_active = False  # survives tracking loss: lowering the hand is normal here
         self._two = TwoHandZoom(cfg) if cfg.two_hand_zoom else None
         self._speed_level = 0  # index into cfg.precision_speeds
@@ -320,6 +323,7 @@ class GestureEngine:
             if second is None
             else HandFeatures.from_observation(second, depth_weight=self.cfg.pinch_depth_weight)
         )
+        self._last_second = second
         aim = self._aim(obs, features)
         other_aim = self._aim(second, other)
         actions += self._fire_guns(aim, other_aim, t)
@@ -395,6 +399,7 @@ class GestureEngine:
             knob_offset=self._media.knob_offset if self._mode is Mode.MEDIA else None,
             volume_rate=self._media.volume_rate if self._mode is Mode.MEDIA else 0.0,
             speed=self.speed,
+            gun_hint=self._gun_hint,
         )
 
     # -- precision ---------------------------------------------------------------------------
@@ -422,7 +427,10 @@ class GestureEngine:
         """Where a finger gun points, if the hand is one (and guns are on)."""
         if obs is None or f is None or not self.cfg.gun_slides or self._media_active:
             return None
-        return gun_direction(obs, f, self.cfg)
+        direction, hint = gun_check(obs, f, self.cfg)
+        if obs is not self._last_second:
+            self._gun_hint = hint  # the cursor hand's, shown in the preview
+        return direction
 
     def _fire_guns(self, aim: str | None, other_aim: str | None, t: float) -> list[Action]:
         """One slide per gun, from either hand. Not while the button is held: a drag is not a
@@ -541,9 +549,12 @@ class GestureEngine:
             return Mode.SCROLL
         if p and not (i or m or r):
             return Mode.SWITCH  # shaka: only the pinky (and the thumb) out
-        if i and p and not m and not r:
+        # The horns need the pinky straight now, not just not yet folded: a finger gun with the
+        # pinky half out (ratio ~1.0-1.13) used to zoom the screen instead of changing slides.
+        pinky_straight = f.extension[Finger.PINKY] > self.cfg.finger_extended_above
+        if i and p and not m and not r and pinky_straight:
             return Mode.ZOOM
-        if i and p and self.cfg.horns_relaxed:
+        if i and p and pinky_straight and self.cfg.horns_relaxed:
             # Middle and ring only half folded still make the horns - but only when they are
             # clearly lower than index and pinky: a relaxed open hand has all four alike.
             e = f.extension

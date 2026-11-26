@@ -35,28 +35,43 @@ class FingerExtensions(Protocol):
     def extension(self) -> Mapping[Any, float]: ...
 
 
+# The other fingers only have to be clearly lower than the index, not folded all the way: a
+# finger gun made in passing often has the pinky half out (ratio ~1.0-1.13), and the first
+# rule (all folded, < 1.0) read that as the horns, which zoom.
+FOLD_MARGIN = 0.2
+
+
+def gun_check(
+    obs: HandObservation, f: FingerExtensions, cfg: GestureConfig
+) -> tuple[str | None, str]:
+    """(which way a finger gun points, or None; why, in a few words for the preview)."""
+    e = {finger.name: ratio for finger, ratio in f.extension.items()}
+    index = e["INDEX"]
+    if index <= cfg.finger_extended_above:
+        return None, f"index not straight ({index:.2f})"
+    others = max(e["MIDDLE"], e["RING"], e["PINKY"])
+    if others >= index - FOLD_MARGIN or max(e["MIDDLE"], e["RING"]) >= cfg.finger_extended_above:
+        return None, f"fold middle, ring, pinky ({others:.2f})"
+    barrel = obs.px[INDEX_TIP, :2] - obs.px[INDEX_MCP, :2]
+    thumb = obs.px[THUMB_TIP, :2] - obs.px[THUMB_MCP, :2]
+    tilt = math.degrees(math.atan2(abs(barrel[1]), abs(barrel[0])))
+    if tilt > cfg.gun_max_tilt:
+        return None, f"point to the side (index {tilt:.0f} deg from level)"
+    norm = float(np.linalg.norm(barrel) * np.linalg.norm(thumb)) or 1.0
+    angle = math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(barrel, thumb)) / norm))))
+    if angle < cfg.gun_thumb_angle:
+        return None, f"thumb up ({angle:.0f} deg from the index, need {cfg.gun_thumb_angle:.0f})"
+    reach = float(np.linalg.norm(obs.px[THUMB_TIP, :2] - obs.px[INDEX_MCP, :2])) / obs.palm_scale
+    if reach < cfg.gun_thumb_out:
+        return None, f"thumb further out ({reach:.2f}, need {cfg.gun_thumb_out:.2f})"
+    direction = "right" if barrel[0] > 0 else "left"
+    return direction, f"GUN {direction}"
+
+
 def gun_direction(obs: HandObservation, f: FingerExtensions, cfg: GestureConfig) -> str | None:
     """Which way a finger gun points: "right" / "left" (in the mirrored preview the user's right
     is the image's right), or None when the hand is not a gun."""
-    e = f.extension
-    names = {finger.name: ratio for finger, ratio in e.items()}
-    if names["INDEX"] <= cfg.finger_extended_above:
-        return None
-    if max(names["MIDDLE"], names["RING"], names["PINKY"]) >= cfg.finger_curled_below:
-        return None
-    barrel = obs.px[INDEX_TIP, :2] - obs.px[INDEX_MCP, :2]
-    thumb = obs.px[THUMB_TIP, :2] - obs.px[THUMB_MCP, :2]
-    if math.degrees(math.atan2(abs(barrel[1]), abs(barrel[0]))) > cfg.gun_max_tilt:
-        return None  # pointing up or down, not to a side
-    cos = float(np.dot(barrel, thumb)) / (
-        float(np.linalg.norm(barrel) * np.linalg.norm(thumb)) or 1.0
-    )
-    if math.degrees(math.acos(max(-1.0, min(1.0, cos)))) < cfg.gun_thumb_angle:
-        return None  # the thumb lies along the hand: pointing, not a gun
-    reach = float(np.linalg.norm(obs.px[THUMB_TIP, :2] - obs.px[INDEX_MCP, :2])) / obs.palm_scale
-    if reach < cfg.gun_thumb_out:
-        return None
-    return "right" if barrel[0] > 0 else "left"
+    return gun_check(obs, f, cfg)[0]
 
 
 class GunTrigger:

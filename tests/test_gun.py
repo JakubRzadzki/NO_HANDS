@@ -97,3 +97,25 @@ def test_guns_in_slides_mode_from_either_hand() -> None:
     assert keys(d.hold(GUN_RIGHT, 0.5) + d.hold(OPEN, 0.3)) == ["right"]
     other = {"center": (0.25, 0.55), **GUN_LEFT}
     assert keys(d.hold(OPEN, 0.5, second=other) + d.hold(OPEN, 0.3)) == ["left"]
+
+
+def test_a_gun_with_the_pinky_half_out_still_fires_and_never_zooms() -> None:
+    """Feedback: "with the gun the screen zooms and the slide does not change". A gun with the
+    pinky not folded all the way (ratio 1.0-1.13) was read as the horns, which zoom."""
+    from src.os_controller import Zoom
+
+    for pinky in (0.5, 0.4):
+        sloppy = {**GUN_RIGHT, "curl": {"middle": 1.0, "ring": 1.0, "pinky": pinky}}
+        d = settled()
+        actions = d.hold(sloppy, 0.6) + d.sweep(sloppy, CENTER, (0.5, 0.4), 0.5)
+        assert keys(actions) == ["right"]
+        assert not any(isinstance(a, Zoom) for a in actions)
+        assert d.outputs[-1].gun_hint == "GUN right"
+
+
+def test_the_preview_says_what_the_gun_is_missing() -> None:
+    d = settled()
+    d.hold(POINT_SIDEWAYS, 0.3)
+    assert d.outputs[-1].gun_hint.startswith("thumb")
+    d.hold(POINT_UP_THUMB_OUT, 0.3)
+    assert d.outputs[-1].gun_hint.startswith("point to the side")
