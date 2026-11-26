@@ -30,6 +30,25 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **A better eye tracker (`--eyes`), with ideas from two other projects:**
+  - **The head's tilt is compensated.** The gaze network of
+    [computer_pointer_controller](https://github.com/Ileriayo/computer_pointer_controller) gets
+    all three head angles (yaw, pitch *and roll*) next to the eye images. Here roll was
+    missing: the iris offset is measured along the eye's own axes, which tilt with the head.
+    In simulation a 10° tilt put the cursor ~105 px off (median); now ~28 px. The saved
+    calibration is from the older model, so the first run recalibrates.
+  - **Dwell click** (`--eyes-click dwell`, `--eyes-dwell 0.8`), as in Microsoft
+    [EyeDrive](https://github.com/microsoft/eyedrive) and Windows Eye Control: rest the cursor
+    on a spot for 1 s and it clicks, once. It clicks again only after the cursor has moved to a
+    new spot. No blink is needed, and a blink can shake the gaze off the target.
+    `--eyes-click both` takes either.
+  - **Eyes off = stop** (EyeDrive's EyesOff): a gaze well outside the screen (the keyboard,
+    the desk) moves and scrolls nothing. Before, it dragged the cursor to the screen edge, and
+    in scroll mode looking at the keyboard scrolled down at full speed. After 0.25 s the HUD
+    says EYES OFF and a dwell click in progress is cancelled.
+  - **The scroll mode is a joystick** (EyeDrive's drive buttons): near the left / right edge
+    it scrolls sideways too, and the centre is "stop". `--eyes-no-hscroll` turns sideways off.
+  - `--eyes-nudge GAIN` sets the head fine-tuning from the command line (0 = off).
 - **Scroll with a stop sign:** raise the other hand, palm to the camera, fingers up (like a
   stop sign), and move this hand up or down. The stop hand is a modifier key, so scrolling
   clashes with no pose of the cursor hand. The two-finger scroll (it kept swapping with the
@@ -108,7 +127,9 @@ problem found while measuring.
 | `--slides` | open hand left / right | previous / next slide |
 | `--slides` | quick pinch | next slide |
 | `--slides` | pinch, move up / down | zoom in / out |
-| `--eyes` | look / blink / wink right / wink left | move / click / right click / scroll mode |
+| `--eyes` | look / blink / wink right / wink left | move / click / right click / scroll joystick |
+| `--eyes --eyes-click dwell` | keep looking at a spot for 1 s | left click (once per spot) |
+| `--eyes` | look away from the screen | nothing moves (eyes off) |
 | `--head` | quick turn / nod | arrow keys |
 | any | both eyes closed 1.5 s (`--eyes`, `--head`), `Ctrl+Alt+P` | pause |
 | any | `Ctrl+Alt+Q`, `q` / `ESC` in the preview | quit |
@@ -347,10 +368,12 @@ A mouse without hands: look where the cursor should go and click with your eyes.
 | --- | --- |
 | Move the cursor | look at the spot: the cursor jumps there and stays |
 | Fine-tune the cursor | turn the head towards the target, more than 1.5° (then 3% of the screen width per degree, up to 15%) |
-| Left click | a deliberate blink with both eyes, 0.35–1 s |
-| Double click | a second deliberate blink within 1.2 s |
+| Left click | a deliberate blink with both eyes, 0.35–1 s (`--eyes-click blink`, the default) |
+| Left click by looking | rest the cursor on a spot for 1 s (`--eyes-click dwell` or `both`; `--eyes-dwell` sets the time) |
+| Double click | a second deliberate blink within 1.2 s (`blink` and `both`) |
 | Right click | wink with the right eye (≥ 0.3 s) |
-| Scroll mode on / off | wink with the left eye; while on, look above / below the screen centre to scroll |
+| Scroll mode on / off | wink with the left eye; while on, look above / below the screen centre to scroll, near the left / right edge to scroll sideways |
+| Stop everything | look away from the screen (keyboard, desk): nothing moves or scrolls |
 | Pause / resume | close both eyes for 1.5 s |
 | Recalibrate | `c` in the preview window |
 
@@ -389,7 +412,27 @@ is built around that:
   turns it off.
 - **Head movement is compensated.** Where you look depends on the eyes and on where the head
   points and sits. The model uses MediaPipe's 3D head pose, so turning, leaning or moving closer
-  while looking at the same spot keeps the cursor there.
+  while looking at the same spot keeps the cursor there. Tilting the head sideways (roll) is
+  compensated too: the iris offset is turned back into screen axes by the tilt of the eye line.
+
+**Dwell click** (`--eyes-click dwell`): the way Windows Eye Control and Microsoft EyeDrive
+click, without blinking.
+- The cursor resting on one spot (within 1.5% of the screen width) for `--eyes-dwell` seconds
+  (default 1.0) is a left click. The gaze map draws a green arc filling around the cursor, and
+  the HUD shows `dwell NN%`.
+- **One click per spot.** The next one needs the cursor to move to a new spot first, so
+  reading or thinking with the eyes on one spot never clicks again and again. After a start,
+  a resume or "eyes off", the cursor also has to move before anything is clicked.
+- A natural blink only pauses the dwell; looking away cancels it.
+- With `dwell` blinks do not click. `--eyes-click both` takes either, and two blinks still
+  make a double click. Winks, the scroll mode and the pause work as always.
+- The feedback is in the preview window, not next to the cursor. Start with 1–1.5 s and go
+  shorter once you trust it.
+
+**Eyes off.** A gaze estimate more than 12% of the screen outside it (`offscreen_margin`) moves
+and scrolls nothing, from the first frame. After 0.25 s of that, or without a face, the HUD says
+EYES OFF and a dwell click in progress is cancelled. Back on the screen, the cursor jumps to
+where you look.
 
 **The gaze map** in the preview's bottom-right corner is a small picture of the screen. It
 shows what the pointer does and why:
@@ -450,6 +493,10 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 | `--eyes` | eye control |
 | `--eyes-pointer gaze/nose` | with `--eyes`: the cursor follows the gaze (default) or the nose |
 | `--recalibrate` | with `--eyes`: redo the gaze calibration |
+| `--eyes-click blink/dwell/both` | with `--eyes`: left click by a deliberate blink (default), by resting the cursor on a spot, or either |
+| `--eyes-dwell S` | with `--eyes`: the dwell time in seconds (default 1.0, 0.2–10); alone it also selects `--eyes-click dwell` |
+| `--eyes-nudge GAIN` | with `--eyes`: head fine-tuning, screen widths per degree (default 0.03; 0 = off) |
+| `--eyes-no-hscroll` | with `--eyes`: the scroll joystick scrolls up / down only |
 | `--head` | head movements press the arrow keys |
 | `--dry-run` | recognise gestures without touching the real mouse and keyboard |
 | `--relative` | hand mouse: relative mode like a real mouse (fist = lift the mouse) |
@@ -525,7 +572,11 @@ parameters are in `config.py`.
 | **Eyes:** small gaze shifts are ignored | by design (see above): nudge with the head; better light lowers the jitter and with it the radius |
 | **Eyes:** the head nudge is too strong / too weak | `head_nudge` (0.03 = 3% of the screen width per degree; 0 = off) |
 | **Eyes:** the cursor moves when the head moves a little | `head_nudge_deadzone` ↑ (e.g. 2.5 degrees) |
-| **Eyes:** blinks click by accident | `blink_min` ↑ (e.g. 0.45) |
+| **Eyes:** blinks click by accident | `blink_min` ↑ (e.g. 0.45), or `--eyes-click dwell` |
+| **Eyes:** the dwell clicks too early / too late | `--eyes-dwell` (e.g. 1.5 / 0.7) |
+| **Eyes:** the dwell never clicks | the cursor must move to a new spot first; with the nose pointer hold the head still; `dwell_radius` ↑ (e.g. 0.025) |
+| **Eyes:** looking at the bottom edge counts as "eyes off" | `offscreen_margin` ↑ (e.g. 0.2), or recalibrate |
+| **Eyes:** scrolling sideways when you meant up / down | `scroll_deadzone_x` ↑ (e.g. 0.4), or `--eyes-no-hscroll` |
 | **Head:** arrows fire too easily | `HeadConfig.yaw_threshold` / `pitch_threshold` ↑ |
 | **Head:** quick turns are missed | `gesture_time` ↑ (e.g. 0.8) or the thresholds ↓ |
 | **Any mode:** low FPS in the HUD (`cam`) | more light; `--probe-camera` for a faster mode, then `--width 1280 --height 720` (on Linux and macOS a slow Full HD mode is replaced automatically) |
@@ -610,7 +661,7 @@ tested without a camera and a display:
 | `src/gaze.py` | head-compensated gaze model, the 3-phase calibration procedure, the fixation filter |
 | `src/calibration_ui.py` | the full-screen calibration window |
 | `docs/make_gesture_images.py` | draws the gesture pictures in `docs/gestures/` |
-| `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, gaze (+ head nudge) or nose pointer, scroll, pause |
+| `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, dwell click, eyes-off stop, gaze (+ head nudge) or nose pointer, scroll joystick, pause |
 | `src/head_engine.py` | `--head`: head pose in degrees to arrow keys, swipe-like, with hysteresis |
 | `src/os_controller.py` | executes actions, tracks held buttons and keys, `release_all()`, screen size |
 | `src/hud.py` | the preview window: landmarks, mode colours, live measurements, FPS, latency, the author's mark (with Polish letters) |
@@ -740,6 +791,15 @@ tested without a camera and a display:
   - **Iris centring:** the iris offset is centred on its calibration mean before it is scaled
     by the distance. On real faces the iris sits high between the eye corners. Uncentred,
     sitting 15 cm closer moved the cursor ~150 px.
+  - **Head roll:** the centred iris offset is turned into screen axes by the tilt of the line
+    through the eye centres (the same landmarks it is measured against, so the signs always
+    agree). A 10° tilt: ~105 px of error without, ~28 px with. The rest comes from centring
+    on the calibration mean rather than on the true "straight ahead" iris position, which a
+    webcam cannot see.
+  - **Why not a gaze network:** computer_pointer_controller runs four OpenVINO networks (face,
+    landmarks, head pose, gaze from 60×60 eye crops). That gaze network reports ~7° of mean
+    error, about 7 cm on the screen at 60 cm, uncalibrated. A calibrated model on MediaPipe's
+    iris and 3D head pose does better, needs no extra download, and keeps running on any CPU.
 - **Gaze fixation filter:** a jump needs samples that agree with each other *and* got there in
   a fast step. Webcam noise wanders slowly from frame to frame. Without the step test it caused
   ~30 false jumps per minute in simulation; now it is under 1.
