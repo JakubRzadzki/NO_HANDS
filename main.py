@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import faulthandler
 import logging
 import os
 import signal
@@ -523,11 +524,15 @@ def _hands_loop(s: _Session, tracker: HandTracker) -> int:
             notes.after_show(packet.frame, stats)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):  # q or ESC
+                log.info("Quit: %s pressed in the preview window.", _key_name(key))
                 break
             if key == ord("p"):
                 s.pause_toggle.set()
             if window.closed():
+                log.info("Quit: the preview window was closed.")
                 break
+    if s.stop.is_set():
+        log.info("Quit: Ctrl+Alt+Q, or the system asked the program to stop.")
     return 0
 
 
@@ -620,6 +625,7 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
             notes.after_show(packet.frame, stats)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
+                log.info("Quit: %s pressed in the preview window.", _key_name(key))
                 break
             if key == ord("p"):
                 s.pause_toggle.set()
@@ -629,11 +635,22 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
                     engine.set_model(new)
                     hud.calibration = describe(new)
             if window.closed():
+                log.info("Quit: the preview window was closed.")
                 break
+    if s.stop.is_set():
+        log.info("Quit: Ctrl+Alt+Q, or the system asked the program to stop.")
     return 0
 
 
+def _key_name(key: int) -> str:
+    return "ESC" if key == 27 else chr(key)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    # A crash below Python (MediaPipe, OpenCV, a driver) kills the process without a traceback:
+    # this prints where every thread was at that moment, so it can be found.
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        faulthandler.enable()
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=args.log_level,
