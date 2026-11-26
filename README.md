@@ -30,6 +30,11 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **The magnifier is gone.** A loosely made finger gun looked like the magnifier's V to the
+  other hand, so the system magnifier came on unasked (on a 4K screen it slowed the whole
+  computer down), and turning it off sent Win + Esc, whose Esc could reach the preview window
+  and quit the program without a word. The log now always says why the program ended, and a
+  crash below Python prints where it happened.
 - **Slides by finger gun:** index out, thumb up, the other fingers folded; pointing right =
   next slide, pointing left = previous, either hand (the right hand naturally points right,
   the left hand left). A pose instead of a movement, so speed, motion blur and frame rate do
@@ -55,10 +60,6 @@ problem found while measuring.
   far on a big screen) turned into a drag or a selection.
 - **Precise pointing:** fold the pinky and the cursor moves at half speed; make a V (index +
   middle out) and it moves at a quarter of the speed. Clicking does not change the speed.
-- **Magnifier with the other hand:** show a V with the hand that does not move the cursor (the
-  left one for most people) and the system's screen magnifier comes on; drop the V and it
-  goes off. The cursor hand keeps moving and clicking at full speed meanwhile. (It used to be
-  the V of the cursor hand, which also slowed the cursor down.)
 - **Zoom with two hands:** pinch both hands and pull them apart or together, in the hand mouse
   and in `--slides`. A second hand that does not pinch changes nothing.
 - **Clicks that are not missed:** a pinch works with the other fingers relaxed (before, one of
@@ -91,7 +92,6 @@ problem found while measuring.
 | Hand mouse, `--slides` | both hands pinched, pull apart / together | zoom in / out |
 | Hand mouse | pinky folded | cursor at 50% |
 | Hand mouse | V or index + middle together (ring + pinky folded) | cursor at 25% |
-| Hand mouse | **other hand** shows a V | magnifier on, while this hand moves and clicks |
 | Hand mouse, `--slides` | **finger gun** (index out, thumb up) pointing right / left | next / previous slide, either hand |
 | Hand mouse | **other hand** swipes left / right (off by default) | previous / next slide, while this hand points |
 | Hand mouse | open hand flicked sideways and back (off by default) | previous / next slide |
@@ -178,7 +178,7 @@ released.
 <tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: the whole hand turned sideways, move up or down"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_zoom.png" width="210" alt="Zoom: horns, move up or down"></td><td align="center"><img src="docs/gestures/hand_clutch.png" width="210" alt="Pause: fist"></td><td align="center"><img src="docs/gestures/hand_flick.png" width="210" alt="Flick sideways and back: previous or next slide"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_slower.png" width="210" alt="Slower cursor: fold the pinky"></td><td align="center"><img src="docs/gestures/hand_precision.png" width="210" alt="Slowest cursor: V sign"></td><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Zoom with two hands: pinch both and pull apart"></td></tr>
-<tr><td align="center"><img src="docs/gestures/hand_magnifier.png" width="210" alt="Magnifier: the other hand shows a V, this hand moves and clicks"></td><td align="center"><img src="docs/gestures/hand_guns.png" width="210" alt="Slides: finger gun pointing right or left"></td><td align="center"><img src="docs/gestures/hand_other_slides.png" width="210" alt="Slides with the other hand: swipe left or right"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_guns.png" width="210" alt="Slides: finger gun pointing right or left"></td><td align="center"><img src="docs/gestures/hand_other_slides.png" width="210" alt="Slides with the other hand: swipe left or right"></td></tr>
 </table>
 
 | Action | Gesture | Notes |
@@ -197,7 +197,6 @@ released.
 | Zoom with two hands | **pinch both hands**, then pull them **apart** (zoom in) or **together** (zoom out) | like two fingers on a touchpad; one step per 12% change of the distance; while the other hand pinches, the cursor holds still and nothing clicks |
 | Slower cursor | **fold the pinky** (index, middle, ring out) | half speed: for small targets |
 | Slowest cursor | **V**: index + middle out (apart or together), ring + pinky folded | quarter speed; clicking works as usual |
-| Magnifier | **the other hand** (the one that does not move the cursor) shows a **V** | the system magnifier is on while the V is held; this hand keeps moving and clicking at full speed |
 | Clutch | **fist** | `absolute`: pauses output; `--relative`: "lifts the mouse" |
 
 - **The left button is held like a real one.** It goes down the moment thumb and index meet and
@@ -210,16 +209,6 @@ released.
   fingers, so a pinch never changes it: make a V, aim at quarter speed, pinch thumb + index,
   done. Back at full speed the cursor does not jump: it catches up with the hand while the
   hand moves.
-- **Magnifier and pointing go together.** Hold a V with the other hand: the screen is
-  magnified and this hand points and clicks normally, at full speed or slowed down as you like.
-  The V must be seen for 4 frames to turn the magnifier on and be gone for 8 to turn it off,
-  so a lost frame never flashes it. Which hand is "the other" is simply the one that does not
-  drive the cursor: for most people the left.
-- **The magnifier is the system's own:** Windows Magnifier (`Win` + `+`, closed with
-  `Win` + `Esc`), macOS Zoom (`Option` + `Cmd` + `8`, turn on "Use keyboard shortcuts to zoom" in
-  Accessibility → Zoom first), GNOME (`Super` + `Alt` + `8`). It follows the cursor and goes off
-  when the program ends, or when both hands leave the view. `GestureConfig.magnifier = False`
-  keeps it off.
 - **Two hands:** the second hand counts only while it pinches. Resting in view, on the desk or
   on the forehead, it changes nothing: the cursor moves and clicks as usual (a pinch of the
   cursor hand then waits 4 frames, so that pinching both hands at once never clicks first). A
@@ -463,7 +452,7 @@ Quick head movements press the arrow keys: slides, photo viewers, video players,
 | `--probe-camera` | measure which modes the camera really delivers, suggest the best, exit |
 | `--camera-test` | show only the camera picture in the preview window (no tracking, no input): the first thing to try when the preview shows nothing |
 | `--camera-settings` | Windows: open the camera driver's settings (exposure, low-light compensation) |
-| `--no-two-hands` | track one hand only: no two-hand zoom, magnifier or other-hand slides (they all use the other hand), the tracker is about twice as fast |
+| `--no-two-hands` | track one hand only: no two-hand zoom and nothing from the other hand (the finger gun still works with the one hand); the tracker is about twice as fast |
 | `--no-hud` | no preview window (less CPU) |
 | `--screen WxH` | manual screen size when auto-detection fails |
 | `--model PATH`, `--no-mirror`, `--no-hotkeys`, `--log-level` | as the names say |
@@ -503,7 +492,6 @@ parameters are in `config.py`.
 | **Hand mouse:** pinches do not register | keep another finger out (OK sign); check "pinch I" in the HUD while touching, then `GestureConfig.pinch_enter` ↑ (e.g. 0.32) |
 | **Hand mouse:** the horns do not zoom | fold middle + ring further, or zoom with two hands; `horns_relaxed` (on) accepts half-folded fingers |
 | **Hand mouse:** the cursor slows down on its own | a finger is half folded: open the hand fully; `precision_speeds = (1.0, 1.0, 1.0)` turns precision off |
-| **Hand mouse:** the magnifier does not come on | is the other hand in view, with a clear V (ring + pinky folded)? The preview draws it in magenta. macOS: enable the Zoom keyboard shortcuts; Linux: GNOME only; not with `--no-two-hands` |
 | **Hand mouse / slides:** low FPS in the HUD (`FPS`, not `cam`) | `--no-two-hands` (looking for a second hand costs about as much as the tracking itself) |
 | **Hand mouse:** the button lets go while dragging | `pinch_exit` ↑ (e.g. 0.42), `pinch_release_frames` ↑, `drag_lost_grace` ↑ |
 | **Hand mouse:** the button does not let go | open the fingers further, or `pinch_exit` ↓ (above `pinch_enter`) |
@@ -560,14 +548,11 @@ parameters are in `config.py`.
     magnified (`TrackerConfig.zoom_crop`). On real hand photos at several sizes that found a
     hand in 48% more frames.
   - A far hand near the frame edge can still be missed.
-- **Hands:** one hand drives the cursor; the other one only zooms (while it pinches) and turns
-  the magnifier on (while it shows a V). When the hands cross, the tracker may swap them: the
+- **Hands:** one hand drives the cursor; the other one only zooms (while it pinches) and fires
+  the finger gun. When the hands cross, the tracker may swap them: the
   cursor then follows the hand nearest to where it was.
 - **Face:** `--eyes` and `--head` track one face, which must be reasonably large in the frame:
   sit within about 1 m.
-- **Magnifier:** it is the system's, through its keyboard shortcut. If that shortcut is changed
-  or switched off (macOS by default), nothing happens. Windows' first `Win` + `+` opens
-  Magnifier's small window; it does not take the focus.
 - **Eyes:** 1–3 cm of accuracy is what a laptop webcam allows; see [Eyes](#eyes---eyes).
 - **Slides:** a wide, quick sideways gesture while talking changes the slide: no detector can
   tell it from a swipe of the same size and speed. Keep a fist while gesturing, or pause.
@@ -606,7 +591,7 @@ tested without a camera and a display:
 | `src/hand_tracker.py` | MediaPipe `HandLandmarker` (VIDEO mode), the second search for far hands, the second hand for the two-hand zoom (the cursor keeps following the same hand), landmarks in isotropic pixel space |
 | `src/smoother.py` | 1€ filter for vectors (one shared cutoff frequency for x and y) |
 | `src/pointer.py` | active region (ROI) matched to the screen's aspect ratio, absolute/relative mapping, precision speed without jumps |
-| `src/gesture_engine.py` | hand features, debounced posture classification, the pinch button (press / hold / release), right click, scroll, zoom, flick, precision speed, magnifier, two-hand mode |
+| `src/gesture_engine.py` | hand features, debounced posture classification, the pinch button (press / hold / release), right click, scroll, zoom, flick, finger gun, precision speed, two-hand mode |
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
 | `src/pinch.py` | the hysteresis latch and the thumb-to-fingertip distance shared by every pinch |
 | `src/two_hands.py` | the zoom with two pinching hands |
@@ -619,7 +604,7 @@ tested without a camera and a display:
 | `docs/make_gesture_images.py` | draws the gesture pictures in `docs/gestures/` |
 | `src/eye_engine.py` | `--eyes`: blink / wink / closure gestures, gaze (+ head nudge) or nose pointer, scroll, pause |
 | `src/head_engine.py` | `--head`: head pose in degrees to arrow keys, swipe-like, with hysteresis |
-| `src/os_controller.py` | executes actions, tracks held buttons, keys and the magnifier, `release_all()`, screen size |
+| `src/os_controller.py` | executes actions, tracks held buttons and keys, `release_all()`, screen size |
 | `src/hud.py` | the preview window: landmarks, mode colours, live measurements, FPS, latency, the author's mark (with Polish letters) |
 
 ### Engineering decisions
@@ -677,11 +662,10 @@ tested without a camera and a display:
   full speed would then jump it across the screen. Instead the gap closes while the hand
   moves: the cursor moves up to 1.5× (or 0.5×) as fast as the hand until it is back. A still
   hand never moves the cursor.
-- **The system's magnifier, not our own window.** A magnifier window of our own would need a
-  screen grabber, could steal the focus from the app below, and must never sit under the
-  cursor (it would receive the clicks). The system magnifier follows the mouse, handles
-  multiple monitors and DPI, and is reached through its keyboard shortcut. The program
-  remembers whether it turned it on, and turns it off on exit.
+- **No magnifier.** A gesture-driven system magnifier was tried and removed: its gesture (a V
+  of the other hand) was too close to a loose finger gun, Windows Magnifier on a 4K screen
+  slowed the whole computer, and its off shortcut (Win + Esc) could deliver an Esc to the
+  preview window, which quits the program.
 - **Scroll is the hand turned sideways, measured by the palm's width.** The distance between the
   index and pinky knuckles in the image, over the palm length, is 0.62–1.12 on real hands
   facing the camera (0.38 for one pinching hand) and about 0.1–0.25 edge on; it does not

@@ -277,16 +277,6 @@ def sideways(c: Canvas) -> None:
     capsule(c, [(0.16, 0.3), (0.36, 0.72), (0.3, 1.02)], 0.2, SKIN, SKIN_LINE)  # the thumb
 
 
-def lens(c: Canvas, centre: Point) -> None:
-    """A magnifying glass."""
-    x, y = c.px(centre)
-    r = c.r(0.2)
-    cv2.circle(c.img, (x, y), r, MOVE, 6 * SS, cv2.LINE_AA)
-    end = (x + round(r * 1.6), y + round(r * 1.6))
-    start = (x + round(r * 0.72), y + round(r * 0.72))
-    cv2.line(c.img, start, end, MOVE, 9 * SS, cv2.LINE_AA)
-
-
 def touch(c: Canvas, p: Point) -> None:
     x, y = c.px(p)
     cv2.circle(c.img, (x, y), c.r(0.13), TOUCH, 5 * SS, cv2.LINE_AA)
@@ -512,23 +502,6 @@ def build() -> dict[str, Any]:
         caption(c, "Slowest cursor", "V: ring + pinky folded", "quarter speed, still clicks")
         return c
 
-    def magnifier() -> Canvas:
-        c = Canvas(0.16, (0.0, 0.0))
-        left = Hand().up("index", 9).up("middle", -7).curl("ring").curl("pinky").thumb_tuck()
-        left.active |= {"index", "middle"}
-        left.mirror, left.shift = True, (-1.15, 0.0)
-        right = open_hand()
-        right.shift = (0.75, 0.0)
-        for h in (left, right):
-            h.draw(c)
-        lens(c, (-1.15, 2.45))
-        arrow(c, (0.95, 2.3), (1.75, 2.3))
-        arrow(c, (0.95, 2.3), (0.15, 2.3))
-        caption(
-            c, "Magnifier", "other hand: V = magnifier on", "this hand moves and clicks as usual"
-        )
-        return c
-
     def two_hands() -> Canvas:
         c = Canvas(0.16, (0.0, 0.0))
         right = pinch_hand()
@@ -583,7 +556,6 @@ def build() -> dict[str, Any]:
         hand_other_slides=other_slides,
         hand_slower=slower,
         hand_precision=precision,
-        hand_magnifier=magnifier,
         hand_two_zoom=two_hands,
         hand_move=move,
         hand_left_button=left_button,
