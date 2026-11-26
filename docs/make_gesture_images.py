@@ -246,6 +246,26 @@ def capsule(
             cv2.circle(c.img, p, t // 2, colour, -1, cv2.LINE_AA)
 
 
+def finger_gun(c: Canvas, origin: Point, mirror: bool) -> None:
+    """A finger gun seen from the side, barrel to the right (or to the left when mirrored)."""
+    sx = -1.0 if mirror else 1.0
+
+    def at(x: float, y: float) -> Point:
+        return origin[0] + sx * x, origin[1] + y
+
+    palm = np.array(
+        [c.px(at(x, y)) for x, y in ((-0.3, 0.0), (0.3, 0.0), (0.32, 0.72), (-0.3, 0.72))]
+    )
+    cv2.fillPoly(c.img, [palm.astype(np.int32)], SKIN_LINE, cv2.LINE_AA)
+    cv2.polylines(c.img, [palm.astype(np.int32)], True, SKIN_LINE, c.r(0.12), cv2.LINE_AA)
+    cv2.fillPoly(c.img, [palm.astype(np.int32)], SKIN, cv2.LINE_AA)
+    cv2.polylines(c.img, [palm.astype(np.int32)], True, SKIN, c.r(0.09), cv2.LINE_AA)
+    for y, length in ((0.42, 0.36), (0.24, 0.33), (0.07, 0.28)):  # folded fingers
+        capsule(c, [at(0.2, y), at(0.2 + length, y)], 0.17, SKIN_SHADE, SKIN_LINE)
+    capsule(c, [at(0.2, 0.62), at(1.2, 0.62)], 0.2, SKIN, ACTIVE)  # the barrel: index
+    capsule(c, [at(-0.05, 0.72), at(0.0, 1.3)], 0.21, SKIN, ACTIVE)  # the thumb, up
+
+
 def sideways(c: Canvas) -> None:
     """The open hand seen from the side (its edge to the camera): palm and fingers stacked."""
     palm = np.array([c.px(p) for p in ((-0.16, 0.0), (0.14, 0.0), (0.2, 0.9), (-0.18, 0.92))])
@@ -542,7 +562,24 @@ def build() -> dict[str, Any]:
         )
         return c
 
+    def guns() -> Canvas:
+        c = Canvas(0.2, (0.0, -0.6))
+        finger_gun(c, (0.65, 0.6), mirror=False)
+        finger_gun(c, (-0.65, 0.6), mirror=True)
+        arrow(c, (2.0, 1.22), (2.4, 1.22))
+        arrow(c, (-2.0, 1.22), (-2.4, 1.22))
+        label(c, "next", (1.7, 0.2))
+        label(c, "previous", (-1.7, 0.2))
+        caption(
+            c,
+            "Slides: finger gun",
+            "index out, thumb up, pointing right / left",
+            "held a moment = one slide",
+        )
+        return c
+
     pics.update(
+        hand_guns=guns,
         hand_other_slides=other_slides,
         hand_slower=slower,
         hand_precision=precision,

@@ -30,6 +30,11 @@ Runs on Windows, Linux (X11) and macOS; see [Limitations](#limitations).
 The latest changes, newest first. Each one came from testing with real users, or from a
 problem found while measuring.
 
+- **Slides by finger gun:** index out, thumb up, the other fingers folded; pointing right =
+  next slide, pointing left = previous, either hand (the right hand naturally points right,
+  the left hand left). A pose instead of a movement, so speed, motion blur and frame rate do
+  not matter. Held for a moment (0.2 s) = one slide. In the hand mouse it replaces the flick
+  and the other hand's swipe, which are now off by default.
 - **Slides with the other hand** in the hand mouse: swipe the hand that does not move the
   cursor left or right. The cursor hand only has the strict flick (it also points), which
   missed careful swipes, wrist flicks and one-way swipes; the other hand's swipe catches
@@ -87,8 +92,9 @@ problem found while measuring.
 | Hand mouse | pinky folded | cursor at 50% |
 | Hand mouse | V or index + middle together (ring + pinky folded) | cursor at 25% |
 | Hand mouse | **other hand** shows a V | magnifier on, while this hand moves and clicks |
-| Hand mouse | **other hand** swipes left / right | previous / next slide, while this hand points |
-| Hand mouse | open hand flicked sideways and back | previous / next slide |
+| Hand mouse, `--slides` | **finger gun** (index out, thumb up) pointing right / left | next / previous slide, either hand |
+| Hand mouse | **other hand** swipes left / right (off by default) | previous / next slide, while this hand points |
+| Hand mouse | open hand flicked sideways and back (off by default) | previous / next slide |
 | Hand mouse | fist | pause (clutch) |
 | Hand mouse | shaka held 0.6 s | mouse ↔ media mode |
 | Media mode | swipe / turn like a knob / fist | track / volume / play-pause |
@@ -172,7 +178,7 @@ released.
 <tr><td align="center"><img src="docs/gestures/hand_double_click.png" width="210" alt="Double click: pinch twice"></td><td align="center"><img src="docs/gestures/hand_right_click.png" width="210" alt="Right click: thumb and middle finger touching"></td><td align="center"><img src="docs/gestures/hand_scroll.png" width="210" alt="Scroll: the whole hand turned sideways, move up or down"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_zoom.png" width="210" alt="Zoom: horns, move up or down"></td><td align="center"><img src="docs/gestures/hand_clutch.png" width="210" alt="Pause: fist"></td><td align="center"><img src="docs/gestures/hand_flick.png" width="210" alt="Flick sideways and back: previous or next slide"></td></tr>
 <tr><td align="center"><img src="docs/gestures/hand_slower.png" width="210" alt="Slower cursor: fold the pinky"></td><td align="center"><img src="docs/gestures/hand_precision.png" width="210" alt="Slowest cursor: V sign"></td><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Zoom with two hands: pinch both and pull apart"></td></tr>
-<tr><td align="center"><img src="docs/gestures/hand_magnifier.png" width="210" alt="Magnifier: the other hand shows a V, this hand moves and clicks"></td><td align="center"><img src="docs/gestures/hand_other_slides.png" width="210" alt="Slides with the other hand: swipe left or right"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_magnifier.png" width="210" alt="Magnifier: the other hand shows a V, this hand moves and clicks"></td><td align="center"><img src="docs/gestures/hand_guns.png" width="210" alt="Slides: finger gun pointing right or left"></td><td align="center"><img src="docs/gestures/hand_other_slides.png" width="210" alt="Slides with the other hand: swipe left or right"></td></tr>
 </table>
 
 | Action | Gesture | Notes |
@@ -183,8 +189,9 @@ released.
 | Drag, select, draw | touch, keep touching and move | the drag starts once the hand has moved ~3 cm (0.35 palm lengths), from where the button went down; a still hand is always a click, however long the pinch |
 | Double click | two quick pinches | the cursor waits 0.35 s after a click, so both land on the same pixel |
 | Right click | **thumb + middle** | one click per pinch + 0.4 s cooldown |
-| Previous / next slide | **swipe the other hand** (the one that does not move the cursor) left / right | Left / Right arrow, with the lenient `--slides` thresholds: a careful swipe counts too |
-| Previous / next slide | **flick** the open hand left / right **and straight back** | Left / Right arrow; the cursor ends where it was |
+| Next / previous slide | **finger gun**: index out, thumb up, other fingers folded, **pointing right / left** | Right / Left arrow, either hand; hold it ~0.2 s, one slide per gun; the cursor holds still meanwhile |
+| Previous / next slide | **swipe the other hand** left / right | off by default (`GestureConfig.other_hand_slides = True`) |
+| Previous / next slide | **flick** the open hand left / right **and straight back** | off by default (`GestureConfig.flick_slides = True`); the cursor ends where it was |
 | Scroll | **the whole hand turned sideways**, its edge to the camera (like a karate chop); move it up / down / sideways | works like a joystick: distance from the starting point sets the *speed*; dead zone. A fist turned sideways is still a fist |
 | Zoom | "horns": **index + pinky** up, middle + ring curled; then move the hand **up** (zoom in) or **down** (zoom out) | Ctrl + wheel, one step per ~2 cm of travel, one step per frame at most; the thumb is free |
 | Zoom with two hands | **pinch both hands**, then pull them **apart** (zoom in) or **together** (zoom out) | like two fingers on a touchpad; one step per 12% change of the distance; while the other hand pinches, the cursor holds still and nothing clicks |
@@ -218,9 +225,20 @@ released.
   cursor hand then waits 4 frames, so that pinching both hands at once never clicks first). A
   held button is never let go because of a second hand. Tracking two hands takes the tracker
   about twice as long (12 → 23 ms per frame here); `--no-two-hands` turns it off.
-- **For slides, use the other hand.** The cursor hand also points, so its slide gesture has to
-  be strict; the other hand does not point, so a plain swipe is enough. Holding the
-  magnifier's V or pinching for a zoom is never taken for a swipe.
+- **The finger gun's barrel says where to go.** It must point roughly sideways (up to 40° from
+  level) with the thumb standing up (at least 50° from the index, its tip at least 0.6 palm
+  lengths from the index knuckle). Measured: a gun's thumb stands at ~75°, about one palm
+  length away; pointing at something keeps the thumb along the hand (25°, 0.2 on a real
+  photo), so pointing at the slide does not fire, and neither does the slowest cursor (index
+  up). Lower the hand (or open it) before the next slide. Point to the side, not at the
+  camera: seen end-on, the index looks short. `GestureConfig.gun_slides = False` turns it off.
+- **Why the barrel and not "right hand = next".** MediaPipe does label the hands, with 95–97%
+  confidence on photos of known left and right hands, but in the mirrored preview the label is
+  reversed, and it can flip. The barrel's direction is measured directly, works with one hand
+  in view, and still gives "right hand points right = next, left hand points left = previous".
+- **The other hand's swipe and the flick** are still there (`other_hand_slides`,
+  `flick_slides`), off by default: the gun replaced them because a movement depends on speed
+  and the frame rate.
 - **The flick has to come straight back.** That is what tells it from moving the cursor:
   nobody points far, fast, and straight back. It also needs to be longer and faster than a
   `--slides` swipe (about 14 cm, in a snap). `GestureConfig.flick_slides = False` turns it off.
@@ -261,11 +279,12 @@ photo viewers. There is no cursor in this mode, so the hand can simply move.
 
 <table>
 <tr><td align="center"><img src="docs/gestures/hand_swipe.png" width="210" alt="Move the open hand left or right: previous or next slide"></td><td align="center"><img src="docs/gestures/slides_pinch.png" width="210" alt="Quick pinch: next slide"></td><td align="center"><img src="docs/gestures/slides_zoom.png" width="210" alt="Pinch and move up or down: zoom"></td></tr>
-<tr><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Pinch both hands and pull apart: zoom"></td></tr>
+<tr><td align="center"><img src="docs/gestures/hand_two_zoom.png" width="210" alt="Pinch both hands and pull apart: zoom"></td><td align="center"><img src="docs/gestures/hand_guns.png" width="210" alt="Finger gun pointing right or left: next or previous slide"></td></tr>
 </table>
 
 | Action | Gesture |
 | --- | --- |
+| Next / previous slide | **finger gun** pointing right / left, either hand (index out, thumb up, held ~0.2 s) |
 | Previous / next slide | move the open hand left / right (Left / Right arrow) |
 | Next slide | a quick **pinch** thumb + index, like a click |
 | Zoom in / out | **pinch** thumb + index and move the hand up / down (Ctrl + mouse wheel, one step per ~3 cm) |
@@ -312,9 +331,10 @@ The HUD shows the hand's path, the stroke as it happens and whether the hand cou
 5. **Camera:** at chest or face height, the hand 40–80 cm from it, light from the front.
 6. **On Windows, PowerPoint must not run "as administrator":** Windows blocks keys sent by a
    program without those rights.
-7. **Need the mouse too?** Run without `--slides`: the cursor hand points and clicks, and the
-   other hand swipes the slides.
-8. **During the talk:** move the open hand left / right for the slides, pinch to go forward,
+7. **Need the mouse too?** Run without `--slides`: the hand points and clicks, and a finger gun
+   (either hand) changes the slides.
+8. **During the talk:** a finger gun pointing right / left for the next / previous slide (the
+   most reliable), or move the open hand left / right; pinch to go forward,
    pinch both hands and pull apart to zoom. Make a fist to move the hand without changing
    anything, and `Ctrl+Alt+P` pauses everything. Gesture low or with the other hand: a wide,
    quick sideways movement is a swipe.
@@ -490,7 +510,9 @@ parameters are in `config.py`.
 | **Hand mouse:** accidental clicks | `pinch_enter` ↓, `pinch_confirm_frames` ↑ |
 | **Hand mouse:** clicks select text or drag things | `GestureConfig.drag_start` ↑ (e.g. 0.5 palm lengths) |
 | **Hand mouse:** a drag takes too much hand travel to start | `drag_start` ↓ (e.g. 0.25) |
-| **Hand mouse:** the flick does not change the slide | swipe with the other hand instead; or bring the hand straight back; `flick_distance` ↓, `flick_speed` ↓ |
+| **Any mode:** the finger gun does not fire | point to the side (not at the camera), thumb clearly up, other fingers folded, hold still ~0.2 s; the label says GUN while it is seen; `gun_thumb_angle` ↓ (e.g. 40), `gun_max_tilt` ↑ (e.g. 55) |
+| **Any mode:** pointing at something changes the slide | keep the thumb along the hand when pointing; `gun_thumb_angle` ↑ (e.g. 60), `gun_confirm_frames` ↑ (e.g. 10) |
+| **Hand mouse:** the flick does not change the slide | use the finger gun; the flick is off by default (`flick_slides`) |
 | **Slides:** a swipe is missed | swipe at least ~9 cm (a palm length), at an even pace, with an open hand, not to the frame edge; the HUD shows the stroke in palm lengths |
 | **Any mode:** the program freezes or quits after a click on the preview | update (both are fixed); if it still happens, run from a terminal and send the error text it prints |
 | **Hand mouse:** slides change while pointing or talking | `flick_distance` ↑, `flick_speed` ↑, or `flick_slides = False` |
@@ -588,6 +610,7 @@ tested without a camera and a display:
 | `src/media_gestures.py` | media mode: swipes, volume jog dial, play/pause |
 | `src/pinch.py` | the hysteresis latch and the thumb-to-fingertip distance shared by every pinch |
 | `src/two_hands.py` | the zoom with two pinching hands |
+| `src/gun.py` | the finger gun: which way the barrel points, one slide per gun |
 | `src/swipes.py` | swipe detection for `--slides` and the hand mouse's flick: strokes cut out of the hand's motion by speed |
 | `src/slide_gestures.py` | `--slides`: swipes, pinch = next slide, pinch + vertical travel = zoom, two-hand zoom |
 | `src/face_tracker.py` | MediaPipe `FaceLandmarker`, eye measurements (openness, iris offset), 3D head pose, gaze features |
