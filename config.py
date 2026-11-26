@@ -19,6 +19,7 @@ FACE_MODEL_URL = (
     "face_landmarker/float16/latest/face_landmarker.task"
 )
 INPUT_MODES = ("hands", "slides", "eyes", "head")
+EYE_CLICKS = ("blink", "dwell", "both")
 
 
 @dataclass
@@ -306,6 +307,20 @@ class EyeConfig:
     double_click_window: float = 1.2  # s: a second deliberate blink within this = double click
     wink_min: float = 0.30  # s: one eye closed while the other stays open
     swap_winks: bool = False  # default: right wink = right click, left wink = scroll mode
+    # How the left click is made (--eyes-click). "blink": a deliberate blink. "dwell": keep the
+    # cursor still on a spot for dwell_time (Windows Eye Control / Microsoft EyeDrive style;
+    # blinks do not click, so they cannot shake the gaze off the target). "both": either.
+    click: str = "blink"
+    dwell_time: float = 1.0  # s the cursor rests on a spot before a dwell click (--eyes-dwell)
+    # The cursor must leave the spot by more than this (fraction of screen width) for the next
+    # dwell click: one click per spot, like EyeDrive's RepeatMouseDownDelay = never.
+    dwell_radius: float = 0.015
+    # Eyes off (EyeDrive's EyesOff -> stop): gaze estimates this far outside the screen (a
+    # fraction of its width / height) move nothing - looking at the keyboard never drags the
+    # cursor to the edge or scrolls. After eyes_off_time of that (or of no face) the HUD says
+    # EYES OFF, a running dwell is cancelled and needs a fresh spot.
+    offscreen_margin: float = 0.12
+    eyes_off_time: float = 0.25  # s
     # Gaze cursor: fixation filter (see FixationFilter)
     fixation_radius: float = 0.0  # fraction of screen width; 0 = 3x the jitter of calibration
     saccade_frames: int = 2  # frames outside the radius (agreeing, after a fast step) = a jump
@@ -318,8 +333,11 @@ class EyeConfig:
     head_nudge_deadzone: float = 1.5  # degrees: smaller turns (natural head drift) do nothing
     # Nose pointer: how far (fraction of frame width) the nose travels to cross the screen
     nose_roi_width: float = 0.12
-    # Scroll mode: look above / below the screen centre
+    # Scroll mode, a gaze joystick (EyeDrive): look above / below the screen centre to scroll,
+    # near the left / right edge to scroll sideways; the centre is "stop".
     scroll_deadzone: float = 0.15  # fraction of screen height around the centre
+    scroll_deadzone_x: float = 0.30  # fraction of screen width around the centre
+    scroll_horizontal: bool = True  # --eyes-no-hscroll: vertical scrolling only
     scroll_gain: float = 40.0  # ticks/s per screen height beyond the dead zone
     scroll_max_rate: float = 15.0  # ticks/s
     # Gaze calibration: 9 dots, the head moving while looking at one dot, 4 check dots
@@ -486,6 +504,14 @@ class AppConfig:
         return [
             (0 < fc.closed_below < fc.open_above < 1, "need 0 < closed_below < open_above < 1"),
             (e.pointer in ("gaze", "nose"), "eyes.pointer must be gaze or nose"),
+            (e.click in EYE_CLICKS, f"eyes.click must be one of {EYE_CLICKS}"),
+            (0.2 <= e.dwell_time <= 10, "eyes.dwell_time must be in [0.2, 10] s"),
+            (0 < e.dwell_radius < 0.2, "eyes.dwell_radius must be in (0, 0.2)"),
+            (
+                e.offscreen_margin >= 0 and e.eyes_off_time >= 0,
+                "eyes.offscreen_margin / eyes_off_time must be >= 0",
+            ),
+            (0 <= e.scroll_deadzone_x < 0.5, "eyes.scroll_deadzone_x must be in [0, 0.5)"),
             (
                 0 < e.blink_min < e.blink_max < fc.pause_hold,
                 "need 0 < blink_min < blink_max < pause_hold",

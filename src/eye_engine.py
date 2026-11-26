@@ -3,13 +3,20 @@
     look at a point ............ cursor jumps there and stays (gaze) / follows the nose
     small head turn ............ nudges the cursor the last bit (gaze pointer)
     deliberate blink 0.35-1 s .. left click; a second one within 1.2 s = double click
+    keep looking at a spot ..... left click (dwell click, --eyes-click dwell / both)
     right wink ................. right click
-    left wink .................. scroll mode on/off: look above / below the screen centre
+    left wink .................. scroll mode on/off, a gaze joystick: look above / below the
+                                 screen centre to scroll, near the left / right edge sideways
     eyes closed >= 1.5 s ....... pause / resume (the nose pointer also re-centres)
+    look away from the screen .. nothing moves or scrolls (eyes off)
 
 Natural blinks last 0.1-0.3 s and are ignored. A gesture is judged when the eyes open again,
 and the cursor stays frozen while they are closing and briefly after, so a click lands where
 you looked before blinking.
+
+The dwell click, the eyes-off stop and the joystick come from Microsoft EyeDrive (a gaze
+joystick built for Steve Gleason, who has ALS): click by looking, never repeat a click on the
+same spot, and stop everything as soon as the eyes leave the screen.
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ class FaceMode(str, Enum):
     EYE_SCROLL = "EYE SCROLL"
     HEAD = "HEAD"
     PAUSED = "PAUSED"
+    EYES_OFF = "EYES OFF"
 
 
 @dataclass
@@ -57,6 +65,7 @@ class FaceOutput:
     gaze_raw: tuple[float, float] | None = None  # px, this frame's gaze estimate (unfiltered)
     fixation: tuple[float, float] | None = None  # px, the fixation the cursor sits on
     radius: float = 0.0  # px, gaze moves smaller than this do not jump the cursor
+    dwell: float = 0.0  # 0..1: how far the dwell click on the current spot has got
 
 
 class _OpenBaseline:
@@ -173,6 +182,51 @@ class HeadNudge:
         return float(x), float(y)
 
 
+class DwellClicker:
+    """Click by looking: the cursor resting within ``radius`` px of a spot for ``seconds``
+    clicks once. The next click needs the cursor to move to a new spot first (EyeDrive's
+    RepeatMouseDownDelay = never), so reading or thinking with the eyes on one spot never
+    clicks again and again. Right after a start, a resume or eyes off it is not armed either:
+    the cursor has to move before anything is clicked.
+
+    Time only counts on frames with a valid pointer, so a natural blink pauses the dwell instead
+    of restarting it."""
+
+    def __init__(self, seconds: float, radius_px: float) -> None:
+        self.seconds = seconds
+        self.radius = radius_px
+        self._anchor: tuple[float, float] | None = None
+        self._elapsed = 0.0
+        self._armed = False
+
+    @property
+    def progress(self) -> float:
+        return min(self._elapsed / self.seconds, 1.0) if self._armed else 0.0
+
+    def reset(self) -> None:
+        """Forget the spot; the cursor must move before the next dwell click."""
+        self._anchor, self._elapsed, self._armed = None, 0.0, False
+
+    def disarm(self) -> None:
+        """A click happened by other means (a blink): no dwell click on this spot."""
+        self._elapsed, self._armed = 0.0, False
+
+    def update(self, pos: tuple[float, float], dt: float) -> bool:
+        if self._anchor is None:
+            self._anchor, self._elapsed = pos, 0.0
+            return False
+        if math.hypot(pos[0] - self._anchor[0], pos[1] - self._anchor[1]) > self.radius:
+            self._anchor, self._elapsed, self._armed = pos, 0.0, True  # a new spot
+            return False
+        if not self._armed:
+            return False
+        self._elapsed += dt
+        if self._elapsed < self.seconds:
+            return False
+        self.disarm()
+        return True
+
+
 class EyeEngine:
     def __init__(
         self,
@@ -201,6 +255,8 @@ class EyeEngine:
             filter_cfg,
             cfg.head_nudge_deadzone,
         )
+        self._dwell = DwellClicker(cfg.dwell_time, cfg.dwell_radius * self.screen_w)
+        self._off_since: float | None = None  # eyes off the screen (or no face) since
         self._gaze_raw: tuple[float, float] | None = None
         self._nudge_offset: tuple[float, float] | None = None
         self._nose_samples: list[tuple[float, float]] = []
@@ -208,6 +264,7 @@ class EyeEngine:
         self._paused = False
         self._scroll = False
         self._scroll_accum = 0.0
+        self._hscroll_accum = 0.0
         self._last_blink = -math.inf
         self._settle_until = -math.inf
         self._last_pos: tuple[int, int] | None = None
@@ -240,6 +297,8 @@ class EyeEngine:
         """Forget motion state (global pause, recalibration). Pause/scroll modes are kept."""
         self._closure.cancel()
         self._fixation.reset()
+        self._dwell.reset()
+        self._off_since = None
         self._nose_samples.clear()
         self._nose_mapper = None
         self._last_pos = None
@@ -254,6 +313,7 @@ class EyeEngine:
     def update(self, obs: FaceObservation | None, t: float) -> FaceOutput:
         if obs is None:
             self._closure.cancel()  # a closure cannot be judged without seeing it end
+            self._eyes_away(t)
             mode = FaceMode.PAUSED if self._paused else FaceMode.NO_FACE
             return FaceOutput(mode, self._label(t, mode))
         dt = 0.0 if self._last_t is None else min(max(t - self._last_t, 0.0), 0.1)
@@ -269,17 +329,26 @@ class EyeEngine:
         features = gaze_features(obs, left, right, self.mirrored)
         if t >= self._settle_until:
             pointer = self._pointer(obs, features, t)
+        eyes_off = self._eyes_off(t)
+        if self._paused or self._scroll:
+            self._dwell.reset()
         if pointer is not None and not self._paused:
             if self._scroll:
-                actions += self._scroll_actions(pointer[1], dt)
+                actions += self._scroll_actions(pointer, dt)
             else:
                 move = self._move(pointer)
                 if move is not None:
                     actions.append(move)
+                spot = self._last_pos  # where the cursor is now
+                if self.cfg.click != "blink" and spot is not None and self._dwell.update(spot, dt):
+                    self._set_flash("DWELL CLICK", t)
+                    actions.append(Click("left"))
 
         mode = (
             FaceMode.PAUSED
             if self._paused
+            else FaceMode.EYES_OFF
+            if eyes_off
             else FaceMode.EYE_SCROLL
             if self._scroll
             else FaceMode.EYES
@@ -298,7 +367,24 @@ class EyeEngine:
             self._gaze_raw if gaze else None,
             self._fixation.center if gaze else None,
             self._fixation.radius if gaze else 0.0,
+            self._dwell.progress,
         )
+
+    # -- eyes off (EyeDrive: EyesOff -> stop) ------------------------------------------------
+    def _eyes_away(self, t: float) -> None:
+        if self._off_since is None:
+            self._off_since = t
+        if t - self._off_since >= self.cfg.eyes_off_time:
+            self._dwell.reset()  # the eyes come back to a fresh start, never mid-dwell
+
+    def _eyes_off(self, t: float) -> bool:
+        off = self._off_since is not None and t - self._off_since >= self.cfg.eyes_off_time
+        return off and not self._paused
+
+    def _offscreen(self, gaze: tuple[float, float]) -> bool:
+        m = self.cfg.offscreen_margin
+        x, y = gaze[0] / self.screen_w, gaze[1] / self.screen_h
+        return not (-m <= x <= 1.0 + m and -m <= y <= 1.0 + m)
 
     # -- gestures --------------------------------------------------------------------------
     def _gesture(self, kind: str, duration: float, t: float) -> list[Action]:
@@ -309,6 +395,8 @@ class EyeEngine:
                 return []
             if self._paused or not cfg.blink_min <= duration <= cfg.blink_max:
                 return []  # natural blink, or a closure of ambiguous length
+            if cfg.click == "dwell":
+                return []  # blinks do not click: the dwell does
             if t - self._last_blink <= cfg.double_click_window:
                 # The first blink already clicked; two more fast clicks make the OS see a double
                 # click even though two deliberate blinks take longer than its 0.5 s window.
@@ -316,16 +404,18 @@ class EyeEngine:
                 self._set_flash("DOUBLE CLICK", t)
                 return [Click("left", 2)]
             self._last_blink = t
+            self._dwell.disarm()  # clicked already: no dwell click on top on the same spot
             self._set_flash("LEFT CLICK", t)
             return [Click("left")]
         if self._paused or duration < cfg.wink_min:
             return []
         right_click_eye = "left" if cfg.swap_winks else "right"
         if kind == right_click_eye:
+            self._dwell.disarm()
             self._set_flash("RIGHT CLICK", t)
             return [Click("right")]
         self._scroll = not self._scroll
-        self._scroll_accum = 0.0
+        self._scroll_accum = self._hscroll_accum = 0.0
         self._set_flash("SCROLL ON" if self._scroll else "SCROLL OFF", t)
         return []
 
@@ -346,12 +436,17 @@ class EyeEngine:
             assert self.model is not None
             gaze = self.model.predict(features, obs.head_position[2])
             self._gaze_raw = gaze
+            if self._offscreen(gaze):  # at the keyboard, the desk, the other monitor...
+                self._eyes_away(t)
+                return None
+            self._off_since = None
             x, y = self._fixation.update(gaze, t)
             if self._fixation.jumped:
                 self._nudge.restart(t)
             dx, dy = self._nudge.update((obs.head[0], obs.head[1]), t)
             self._nudge_offset = (dx, dy)
             return x + dx, y + dy
+        self._off_since = None
         nose = (float(obs.norm[NOSE_TIP, 0]), float(obs.norm[NOSE_TIP, 1]))
         if self._nose_mapper is None:
             self._nose_samples.append(nose)
@@ -373,18 +468,27 @@ class EyeEngine:
         self._last_pos = (x, y)
         return MoveTo(x, y)
 
-    def _scroll_actions(self, y: float, dt: float) -> list[Action]:
-        offset = (y - self.screen_h / 2.0) / self.screen_h  # + = below the centre
-        excess = abs(offset) - self.cfg.scroll_deadzone
-        rate = 0.0
-        if excess > 0:  # looking below the centre scrolls down (negative wheel ticks)
-            rate = math.copysign(
-                min(self.cfg.scroll_gain * excess, self.cfg.scroll_max_rate), -offset
-            )
-        self._scroll_accum += rate * dt
-        ticks = int(self._scroll_accum)
-        self._scroll_accum -= ticks
-        return [Scroll(0, ticks)] if ticks else []
+    def _scroll_rate(self, offset: float, deadzone: float) -> float:
+        """Wheel ticks/s for a gaze ``offset`` (fraction of the screen) from the centre."""
+        excess = abs(offset) - deadzone
+        if excess <= 0:
+            return 0.0
+        return math.copysign(min(self.cfg.scroll_gain * excess, self.cfg.scroll_max_rate), offset)
+
+    def _scroll_actions(self, pointer: tuple[float, float], dt: float) -> list[Action]:
+        """A gaze joystick (EyeDrive): the further from the centre you look, the faster it
+        scrolls that way; the centre zone is "stop"."""
+        cfg = self.cfg
+        down = (pointer[1] - self.screen_h / 2.0) / self.screen_h  # + = below the centre
+        right = (pointer[0] - self.screen_w / 2.0) / self.screen_w  # + = right of the centre
+        # Looking below the centre scrolls down: negative wheel ticks.
+        self._scroll_accum += -self._scroll_rate(down, cfg.scroll_deadzone) * dt
+        if cfg.scroll_horizontal:
+            self._hscroll_accum += self._scroll_rate(right, cfg.scroll_deadzone_x) * dt
+        dy, dx = int(self._scroll_accum), int(self._hscroll_accum)
+        self._scroll_accum -= dy
+        self._hscroll_accum -= dx
+        return [Scroll(dx, dy)] if dx or dy else []
 
     # -- HUD label -------------------------------------------------------------------------
     def _set_flash(self, text: str, t: float, duration: float = 0.5) -> None:
@@ -394,5 +498,7 @@ class EyeEngine:
         if t < self._flash_until:
             return self._flash
         if mode is FaceMode.EYES:
-            return "EYES" if self.cfg.pointer == "gaze" else "EYES + NOSE"
+            label = "EYES" if self.cfg.pointer == "gaze" else "EYES + NOSE"
+            progress = self._dwell.progress
+            return f"{label}  dwell {100 * progress:3.0f}%" if progress > 0 else label
         return mode.value

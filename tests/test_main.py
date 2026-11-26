@@ -263,6 +263,23 @@ def test_eye_and_head_flags_select_the_input_mode() -> None:
     assert main.main(["--eyes-pointer", "nose"]) == 2  # needs --eyes
 
 
+def test_eye_options_reach_the_eye_config() -> None:
+    parse = main.build_parser().parse_args
+    e = main.config_from_args(parse(["--eyes"])).eyes
+    assert (e.click, e.dwell_time, e.scroll_horizontal) == ("blink", 1.0, True)
+    e = main.config_from_args(
+        parse(["--eyes", "--eyes-click", "both", "--eyes-dwell", "0.7", "--eyes-nudge", "0"])
+    ).eyes
+    assert (e.click, e.dwell_time, e.head_nudge) == ("both", 0.7, 0.0)
+    e = main.config_from_args(parse(["--eyes", "--eyes-dwell", "1.5", "--eyes-no-hscroll"])).eyes
+    assert (e.click, e.dwell_time, e.scroll_horizontal) == ("dwell", 1.5, False)  # dwell implied
+    with pytest.raises(SystemExit):
+        parse(["--eyes", "--eyes-click", "wink"])
+    assert main.main(["--eyes", "--eyes-dwell", "0.05"]) == 2  # too short: clicks everywhere
+    for flag in (["--eyes-click", "dwell"], ["--eyes-dwell", "1"], ["--eyes-no-hscroll"]):
+        assert main.main(flag) == 2  # needs --eyes
+
+
 def test_probe_camera_flag_prints_the_measured_modes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

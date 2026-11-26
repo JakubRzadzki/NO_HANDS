@@ -76,3 +76,19 @@ def test_the_gaze_map_stays_above_the_watermark() -> None:
         map_bottom = np.nonzero(with_map.any(axis=(1, 2)))[0].max()
         mark_top = np.nonzero(with_mark.any(axis=(1, 2)))[0].min()
         assert map_bottom < mark_top
+
+
+def test_gaze_map_draws_the_dwell_ring_and_the_hud_knows_eyes_off() -> None:
+    def green_pixels(dwell: float) -> int:
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        out = FaceOutput(FaceMode.EYES, "EYES", pointer=(960.0, 540.0), dwell=dwell)
+        GazeMap((1920, 1080)).draw(frame, out)
+        return int(((frame[..., 1] > 200) & (frame[..., 2] < 80)).sum())
+
+    assert green_pixels(0.0) == 0 < green_pixels(0.3) < green_pixels(0.9)
+    cfg = AppConfig()
+    cfg.eyes.click = "dwell"
+    hud = FaceHud("eyes", cfg.face, cfg.head, None, (1920, 1080), cfg.eyes)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    hud.draw(frame, make_face(), FaceOutput(FaceMode.EYES_OFF, "EYES OFF"), LoopStats(), False)
+    assert frame.any()

@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from config import FaceConfig, GestureConfig, HeadConfig, SlidesConfig
+from config import EyeConfig, FaceConfig, GestureConfig, HeadConfig, SlidesConfig
 from src.eye_engine import FaceMode, FaceOutput
 from src.face_tracker import EYE_OUTLINES, IRIS_CENTERS, NOSE_TIP, FaceObservation
 from src.gesture_engine import PINCH_FINGERS, EngineOutput, Finger, LeftState, Mode
@@ -337,8 +337,18 @@ FACE_COLORS: dict[FaceMode, Color] = {
     FaceMode.EYE_SCROLL: YELLOW,
     FaceMode.PAUSED: RED,
     FaceMode.NO_FACE: GRAY,
+    FaceMode.EYES_OFF: GRAY,
 }
-FACE_EVENTS = {"LEFT CLICK", "DOUBLE CLICK", "RIGHT CLICK", "LEFT", "RIGHT", "UP", "DOWN"}
+FACE_EVENTS = {
+    "LEFT CLICK",
+    "DOUBLE CLICK",
+    "DWELL CLICK",
+    "RIGHT CLICK",
+    "LEFT",
+    "RIGHT",
+    "UP",
+    "DOWN",
+}
 
 
 class GazeMap:
@@ -348,6 +358,7 @@ class GazeMap:
         red dots ...... the raw gaze estimates of the last second (their spread = the jitter)
         green ring .... the fixation the cursor sits on, and how far the gaze must jump to move it
         white cross ... the cursor (the fixation plus the head nudge)
+        green arc ..... the dwell click filling up (--eyes-click dwell / both)
 
     A cloud of red dots off to one side of where you look is calibration error; a cloud that is
     wide is jitter (light); red dots far outside the ring while the cursor does not follow means
@@ -386,6 +397,10 @@ class GazeMap:
             arm = round(6 * k)
             cv2.line(frame, (cx - arm, cy), (cx + arm, cy), WHITE, 2, cv2.LINE_AA)
             cv2.line(frame, (cx, cy - arm), (cx, cy + arm), WHITE, 2, cv2.LINE_AA)
+            if out.dwell > 0:
+                ring = round(11 * k)
+                end = -90 + 360 * min(out.dwell, 1.0)
+                cv2.ellipse(frame, (cx, cy), (ring, ring), 0, -90, end, GREEN, 2, cv2.LINE_AA)
 
 
 class FaceHud:
@@ -398,8 +413,10 @@ class FaceHud:
         head: HeadConfig,
         calibration: str | None = None,
         screen_size: tuple[int, int] | None = None,  # --eyes with the gaze pointer: a GazeMap
+        eyes: EyeConfig | None = None,
     ) -> None:
         self.mode = mode
+        self.eyes = eyes or EyeConfig()
         self.face = face
         self.head = head
         self.calibration = calibration  # one-line quality summary of the gaze calibration
@@ -460,20 +477,26 @@ class FaceHud:
             if self.calibration is not None:
                 lines.append((f"gaze: {self.calibration}", 0.45, WHITE))
             if obs is not None:
-                yaw, pitch, _ = obs.head
+                yaw, pitch, roll = obs.head
                 nudge = ""
                 if out.nudge is not None:
                     nudge = f"   head nudge {out.nudge[0]:+4.0f} {out.nudge[1]:+4.0f} px"
                 lines.append(
                     (
-                        f"head yaw {yaw:+4.0f} pitch {pitch:+4.0f} deg  "
+                        f"head yaw {yaw:+4.0f} pitch {pitch:+4.0f} roll {roll:+4.0f} deg  "
                         f"distance {obs.head_position[2]:3.0f} cm{nudge}",
                         0.45,
                         WHITE,
                     )
                 )
-            lines.append(("blink = click, 2 blinks = double, right wink = right click", 0.4, GRAY))
-            lines.append(("left wink = scroll mode (look up/down), c = recalibrate", 0.4, GRAY))
+            click = {
+                "blink": "blink = click, 2 blinks = double",
+                "dwell": f"look at a spot {self.eyes.dwell_time:.1f} s = click",
+                "both": f"blink or look {self.eyes.dwell_time:.1f} s = click, 2 blinks = double",
+            }[self.eyes.click]
+            lines.append((f"{click}, right wink = right click", 0.4, GRAY))
+            scroll = "left wink = scroll joystick (look to an edge), c = recalibrate"
+            lines.append((scroll, 0.4, GRAY))
         lines.append(("eyes closed 1.5 s = pause/resume   q/ESC quit", 0.4, GRAY))
         draw_text_panel(frame, lines)
 

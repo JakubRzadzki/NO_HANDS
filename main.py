@@ -6,6 +6,8 @@ python main.py --relative          # mouse-like relative mode: a fist "lifts" th
 python main.py --slides            # presentations: quick hand strokes = slides and zoom
 python main.py --eyes              # hands-free: the cursor follows your gaze, blink to click
 python main.py --eyes --eyes-pointer nose   # cursor follows the nose, blink to click
+python main.py --eyes --eyes-click dwell    # look at a spot for 1 s to click (no blinking)
+python main.py --eyes --eyes-click both --eyes-dwell 0.8   # blink or a 0.8 s dwell
 python main.py --head              # head movements press the arrow keys
 """
 
@@ -26,7 +28,7 @@ from typing import Any
 
 import cv2
 
-from config import AppConfig, HotkeyConfig
+from config import EYE_CLICKS, AppConfig, HotkeyConfig
 from src.calibration_ui import describe, quality_warnings, run_calibration
 from src.camera import ThreadedCamera, probe_camera
 from src.eye_engine import EyeEngine, FaceMode, FaceOutput
@@ -82,6 +84,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="with --eyes: cursor follows the gaze (default) or the nose (more precise)",
     )
     p.add_argument("--recalibrate", action="store_true", help="with --eyes: recalibrate the gaze")
+    p.add_argument(
+        "--eyes-click",
+        choices=list(EYE_CLICKS),
+        help="with --eyes: left click by a deliberate blink (default), by dwelling on a spot "
+        "(dwell), or either (both)",
+    )
+    p.add_argument(
+        "--eyes-dwell",
+        type=float,
+        metavar="SECONDS",
+        help="with --eyes: how long the cursor rests on a spot for a dwell click (default: 1.0)",
+    )
+    p.add_argument(
+        "--eyes-nudge",
+        type=float,
+        metavar="GAIN",
+        help="with --eyes: how far a small head turn moves the gaze cursor, in screen widths "
+        "per degree (default: 0.03; 0 = off)",
+    )
+    p.add_argument(
+        "--eyes-no-hscroll",
+        action="store_true",
+        help="with --eyes: the scroll joystick scrolls up / down only, never sideways",
+    )
     p.add_argument("--camera-id", type=int, default=0, help="webcam index (default: 0)")
     p.add_argument(
         "--probe-camera",
@@ -134,8 +160,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def config_from_args(args: argparse.Namespace) -> AppConfig:
-    if (args.eyes_pointer or args.recalibrate) and not args.eyes:
-        raise ValueError("--eyes-pointer and --recalibrate only work together with --eyes")
+    eye_options = {
+        "--eyes-pointer": args.eyes_pointer is not None,
+        "--recalibrate": args.recalibrate,
+        "--eyes-click": args.eyes_click is not None,
+        "--eyes-dwell": args.eyes_dwell is not None,
+        "--eyes-nudge": args.eyes_nudge is not None,
+        "--eyes-no-hscroll": args.eyes_no_hscroll,
+    }
+    given = [name for name, used in eye_options.items() if used]
+    if given and not args.eyes:
+        raise ValueError(f"{', '.join(given)} only work(s) together with --eyes")
     cfg = AppConfig()
     cfg.input_mode = (
         "eyes" if args.eyes else "head" if args.head else "slides" if args.slides else "hands"
@@ -143,6 +178,15 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     if args.eyes_pointer:
         cfg.eyes.pointer = args.eyes_pointer
     cfg.eyes.recalibrate = args.recalibrate
+    if args.eyes_click:
+        cfg.eyes.click = args.eyes_click
+    if args.eyes_dwell is not None:
+        cfg.eyes.dwell_time = args.eyes_dwell
+        if args.eyes_click is None:
+            cfg.eyes.click = "dwell"  # asking for a dwell time means wanting the dwell click
+    if args.eyes_nudge is not None:
+        cfg.eyes.head_nudge = args.eyes_nudge
+    cfg.eyes.scroll_horizontal = not args.eyes_no_hscroll
     cfg.camera.device_id = args.camera_id
     if args.width:
         cfg.camera.width = args.width
@@ -377,7 +421,9 @@ def print_probe(device_id: int) -> int:
 
 def _describe(cfg: AppConfig) -> str:
     if cfg.input_mode == "eyes":
-        return f"eyes ({cfg.eyes.pointer} pointer)"
+        e = cfg.eyes
+        click = f"{e.click} click" + (f" {e.dwell_time:.1f} s" if e.click != "blink" else "")
+        return f"eyes ({e.pointer} pointer, {click})"
     if cfg.input_mode == "head":
         return "head (arrow keys)"
     if cfg.input_mode == "slides":
@@ -578,7 +624,9 @@ def _face_loop(s: _Session, tracker: FaceTracker) -> int:
     quality = describe(model) if model is not None else None
     gaze_map = s.screen if model is not None else None  # the HUD shows what the gaze does
     hud = (
-        FaceHud(cfg.input_mode, cfg.face, cfg.head, quality, gaze_map) if cfg.hud.enabled else None
+        FaceHud(cfg.input_mode, cfg.face, cfg.head, quality, gaze_map, cfg.eyes)
+        if cfg.hud.enabled
+        else None
     )
     window = _WindowWatch(cfg.hud.window_name)
     notes = _PreviewNotes(cfg.hud.window_name)
