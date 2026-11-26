@@ -41,8 +41,8 @@ import numpy.typing as npt
 FloatArray = npt.NDArray[np.float64]
 log = logging.getLogger(__name__)
 
-MODEL_VERSION = 2
-N_FEATURES = 6  # iris x, iris y, head yaw, head pitch, head x, head y (see GAZE_FEATURES)
+MODEL_VERSION = 3  # 3: head roll compensation (a 7th feature)
+N_FEATURES = 7  # iris x/y, head yaw/pitch, head x/y, head roll (see GAZE_FEATURES)
 N_TERMS = 8  # intercept, eye x/y, head x/y, three quadratic eye terms
 # Spreads below these (eye term in eye widths, head term in cm) count as "did not vary" when the
 # terms are standardised, so a head held still during calibration cannot get huge,
@@ -91,7 +91,7 @@ Sample = tuple[Sequence[float], float]  # (gaze features, viewing distance in cm
 def physical_terms(
     features: FloatArray, distances: FloatArray, reference: float, eye_center: FloatArray
 ) -> FloatArray:
-    """(n, 6) gaze features + distances -> (n, 4): eye term x/y and head term x/y.
+    """(n, 7) gaze features + distances -> (n, 4): eye term x/y and head term x/y.
 
     The gaze point = eye position + distance * tan(head angle + eye angle). Linearised:
 
@@ -104,6 +104,11 @@ def physical_terms(
     with the distance as if it were an eye angle: in simulation sitting 15 cm closer then put
     the cursor ~150 px off instead of ~40.
 
+    The centred iris offset is measured along the eye's axes, which tilt with the head. It is
+    turned back into screen axes by the head roll, the way computer_pointer_controller rotates
+    the gaze vector by the roll angle. In simulation a 10-degree tilt otherwise put the cursor
+    ~90 px off (median), with the error growing towards the screen edges.
+
     The head term is where the head's straight-ahead line meets the screen. Folding rotation
     and position into it matters: during calibration they move together (turning the head
     moves the eyes too), so fitted as separate features their weights came out arbitrary, and
@@ -113,10 +118,13 @@ def physical_terms(
     d = np.clip(distances, 20.0, 200.0)
     ratio = d / reference
     yaw, pitch = np.radians(features[:, 2]), np.radians(features[:, 3])
+    roll = np.radians(features[:, 6])
+    ex, ey = features[:, 0] - eye_center[0], features[:, 1] - eye_center[1]
+    cos, sin = np.cos(roll), np.sin(roll)
     return np.column_stack(
         [
-            (features[:, 0] - eye_center[0]) * ratio,
-            (features[:, 1] - eye_center[1]) * ratio,
+            (ex * cos - ey * sin) * ratio,
+            (ex * sin + ey * cos) * ratio,
             features[:, 4] + d * np.tan(yaw),
             features[:, 5] + d * np.tan(pitch),
         ]

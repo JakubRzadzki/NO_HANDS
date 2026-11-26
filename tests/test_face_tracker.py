@@ -56,10 +56,21 @@ def test_without_mirroring_the_sides_are_swapped_into_the_users_view() -> None:
 def test_gaze_features_are_in_the_users_view_and_screen_oriented() -> None:
     obs = make_face(gaze=(0.1, 0.05), yaw=4.0, pitch=-3.0, head_position=(2.0, 6.0, 55.0))
     left, right = measure_eyes(obs, mirrored=True)
-    ix, iy, yaw, pitch, hx, hy = gaze_features(obs, left, right, mirrored=True)
+    ix, iy, yaw, pitch, hx, hy, roll = gaze_features(obs, left, right, mirrored=True)
     assert (ix, iy) == pytest.approx((0.1, 0.05), abs=1e-6)  # looking right and down
     assert (yaw, pitch, hx) == pytest.approx((4.0, -3.0, 2.0))
     assert hy == pytest.approx(-6.0)  # 6 cm up = -6 in screen orientation (y down)
+    assert roll == pytest.approx(0.0, abs=1e-6)
     # The same image without mirroring: the iris offset to the image's right is the user's left.
     left, right = measure_eyes(obs, mirrored=False)
     assert gaze_features(obs, left, right, mirrored=False)[0] == pytest.approx(-0.1, abs=1e-6)
+
+
+def test_the_roll_feature_follows_the_eye_line() -> None:
+    """Head tilted so that its right side on the screen is lower: positive roll, mirrored or not
+    (in an unmirrored image the screen's right is the image's left, so the sign flips)."""
+    obs = make_face(roll_deg=12.0)
+    left, right = measure_eyes(obs, mirrored=True)
+    assert gaze_features(obs, left, right, mirrored=True)[6] == pytest.approx(12.0, abs=1e-6)
+    left, right = measure_eyes(obs, mirrored=False)
+    assert gaze_features(obs, left, right, mirrored=False)[6] == pytest.approx(-12.0, abs=1e-6)
